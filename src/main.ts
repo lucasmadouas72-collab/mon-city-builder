@@ -4,6 +4,8 @@ import { CameraController } from './input/CameraController';
 import { ToolManager } from './input/ToolManager';
 import { SceneRenderer } from './render/SceneRenderer';
 import { TrafficView } from './render/TrafficView';
+import { DataView } from './render/DataView';
+import { ServiceLayer } from './render/ServiceLayer';
 import { Simulation } from './sim/Simulation';
 import { World } from './sim/World';
 import { Hud } from './ui/Hud';
@@ -17,14 +19,19 @@ const view = new SceneRenderer(container, world);
 const cam = new CameraController(view.camera, view.renderer.domElement, MAP_SIZE);
 const tools = new ToolManager(sim, view, cam, view.renderer.domElement);
 const trafficView = new TrafficView(world, sim.traffic);
-view.scene.add(trafficView.group);
-new Hud(document.getElementById('hud')!, sim, tools, trafficView);
+const dataView = new DataView(sim);
+const services = new ServiceLayer(world, sim.utilities);
+view.scene.add(trafficView.group, dataView.overlay.group, services.group);
+new Hud(document.getElementById('hud')!, sim, tools, dataView);
 tools.setTool('road');
 
 sim.events.on('roadsChanged', () => {
   view.roads.rebuild();
   view.buildings.markChanged([]);
+  services.rebuild();
 });
+sim.events.on('servicesChanged', () => services.rebuild());
+sim.events.on('firesChanged', () => services.refreshFires());
 sim.events.on('zonesChanged', () => view.refreshZones(world));
 sim.events.on('buildingsChanged', ({ tiles }) => {
   view.buildings.markChanged(tiles);
@@ -39,7 +46,9 @@ function frame(now: number) {
   last = now;
   sim.update(dt);
   cam.update(dt);
-  trafficView.update(now / 1000);
+  trafficView.update();
+  dataView.update(now / 1000);
+  services.update(now / 1000);
   view.render(now / 1000);
   requestAnimationFrame(frame);
 }
@@ -47,4 +56,4 @@ requestAnimationFrame(frame);
 document.getElementById('loading')?.remove();
 
 // Accès console pour le débogage
-Object.assign(window, { game: { world, sim, view, cam, tools, trafficView } });
+Object.assign(window, { game: { world, sim, view, cam, tools, trafficView, dataView, services } });

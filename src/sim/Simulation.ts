@@ -5,6 +5,8 @@ import { Emitter, type GameEvents } from '../core/Events';
 import { rng } from '../core/noise';
 import { Tile, World } from './World';
 import { Traffic } from './Traffic';
+import { Utilities } from './Utilities';
+import { ABANDON_DAYS, Coverage, SERVICE_INFO, Service, Utility } from './services';
 import { BuildState, Zone, ZONE_DEPTH, ZONE_INFO, type ZoneType } from './zones';
 
 const DAYS_PER_MONTH = 30;
@@ -54,10 +56,13 @@ export class Simulation {
   private zonedDirty = true;
 
   readonly traffic: Traffic;
+  readonly utilities: Utilities;
+  private lastUtilityHint = -999;
 
   constructor(world: World) {
     this.world = world;
     this.traffic = new Traffic(world);
+    this.utilities = new Utilities(world, (idx) => this.traffic.roadAccess(idx), (idx) => this.capacity(idx));
     this.recomputeStats();
   }
 
@@ -123,6 +128,34 @@ export class Simulation {
       }
     }
 
+    const ut = this.utilities;
+    let blockedByUtilities = -1;
+    // Bâtiments sans électricité ou sans eau : abandonnés au bout d'un moment. Incendies.
+    for (const idx of this.zonedTiles()) {
+      if (w.bState[idx] !== BuildState.Built) continue;
+      if (!ut.hasUtility(idx, Utility.Power) || !ut.hasUtility(idx, Utility.Water)) {
+        if (++ut.problemDays[idx] >= ABANDON_DAYS) {
+          this.clearBuilding(idx);
+          changed.push(idx);
+          continue;
+        }
+      } else ut.problemDays[idx] = 0;
+      const covered = (ut.coverage[idx] & Coverage.Fire) !== 0;
+      if (ut.fire[idx]) {
+        ut.fire[idx]--;
+        if (covered && ut.fire[idx] > 0 && this.rand() < 0.45) ut.fire[idx] = 0; // les pompiers éteignent
+        if (ut.fire[idx] === 0 && !covered) {
+          this.clearBuilding(idx);
+          changed.push(idx);
+          this.events.emit('notify', { text: 'Un bâtiment a brûlé (pas de caserne à proximité)', kind: 'warn' });
+        }
+        if (!ut.fire[idx]) this.events.emit('firesChanged', undefined);
+      } else if (this.rand() < (covered ? 0.00004 : 0.00022) * w.bLevel[idx]) {
+        ut.fire[idx] = 8;
+        this.events.emit('firesChanged', undefined);
+      }
+    }
+
     const tiles = this.zonedTiles();
     if (tiles.length) {
       const d = this.stats.demand;
@@ -136,8 +169,10 @@ export class Simulation {
 
         if (state === BuildState.Empty) {
           if (access && demand > 0 && this.isUnlocked(zone) && this.rand() < 0.08 + demand * 0.35) {
-            this.startConstruction(idx, 1);
-            changed.push(idx);
+            if (this.utilities.canGrow(idx)) {
+              this.startConstruction(idx, 1);
+              changed.push(idx);
+            } else blockedByUtilities = idx;
           }
         } else if (state === BuildState.Built) {
           if (!access) {
@@ -153,6 +188,15 @@ export class Simulation {
           }
         }
       }
+    }
+
+    if (blockedByUtilities >= 0 && this.dayCount - this.lastUtilityHint > 40) {
+      this.lastUtilityHint = this.dayCount;
+      const miss = ut.missing(blockedByUtilities).map((u) => (u === Utility.Power ? "d'électricité" : "d'eau"));
+      const text = miss.length
+        ? `Les bâtiments ne poussent pas : il manque ${miss.join(' et ')} (menu Réseaux)`
+        : 'Production insuffisante : ajoutez des équipements (menu Réseaux)';
+      this.events.emit('notify', { text, kind: 'warn' });
     }
 
     if (changed.length) {
@@ -177,6 +221,8 @@ export class Simulation {
 
   private clearBuilding(idx: number): void {
     const w = this.world;
+    this.utilities.fire[idx] = 0;
+    this.utilities.problemDays[idx] = 0;
     w.bState[idx] = BuildState.Empty;
     w.bLevel[idx] = 0;
     w.bTimer[idx] = 0;
@@ -206,6 +252,13 @@ export class Simulation {
       }
     }
     if (water) v += 0.15;
+    const cov = this.utilities.coverage[idx];
+    if (cov & Coverage.Health) v += 0.05;
+    if (cov & Coverage.Education) v += 0.05;
+    if (cov & Coverage.Police) v += 0.05;
+    if (cov & Coverage.Fire) v += 0.03;
+    if (cov & Coverage.Park) v += 0.09;
+    v -= this.utilities.nuisance[idx];
     return clamp(v, 0, 1);
   }
 
@@ -214,7 +267,11 @@ export class Simulation {
     const level = w.bLevel[idx];
     const zone = w.zones[idx] as ZoneType;
     const pop = this.stats.population;
+    const ut = this.utilities;
+    if (!ut.hasUtility(idx, Utility.Power) || !ut.hasUtility(idx, Utility.Water)) return false;
+    if (level === 2 && !ut.hasUtility(idx, Utility.Sewage)) return false;
     if (zone === Zone.Industrial) return pop > (level === 1 ? 250 : 1500);
+    if (level === 2 && zone === Zone.Residential && !(ut.coverage[idx] & Coverage.Education)) return false;
     const lv = this.landValue(idx);
     return level === 1 ? pop > 200 && lv > 0.4 : pop > 1500 && lv > 0.55;
   }
@@ -237,11 +294,13 @@ export class Simulation {
       if (z === Zone.Residential) population += cap;
       else jobs[z] += cap;
     }
+    this.utilities.compute();
     const totalJobs = jobs[Zone.Commercial] + jobs[Zone.Industrial] + jobs[Zone.Office];
     const workers = Math.round(population * 0.55);
 
     const demand = zeroByZone();
-    demand[Zone.Residential] = clamp((totalJobs - workers + 45) / (workers * 0.4 + 60));
+    const happy = population ? this.utilities.stats.happiness : 0.6;
+    demand[Zone.Residential] = clamp((totalJobs - workers + 45) / (workers * 0.4 + 60) + (happy - 0.55) * 0.6);
     const wantC = population * 0.2;
     demand[Zone.Commercial] = clamp((wantC - jobs[Zone.Commercial] + 6) / (wantC * 0.5 + 20));
     const wantI = population * 0.28 + 12;
@@ -251,7 +310,8 @@ export class Simulation {
 
     let income = population * ZONE_INFO[Zone.Residential].tax;
     for (const z of [Zone.Commercial, Zone.Industrial, Zone.Office] as const) income += jobs[z] * ZONE_INFO[z].tax;
-    const expenses = this.roadCount * ROAD_UPKEEP_MONTH;
+    let expenses = this.roadCount * ROAD_UPKEEP_MONTH;
+    for (let k = 0; k < w.service.length; k++) if (w.service[k]) expenses += SERVICE_INFO[w.service[k] as Exclude<Service, Service.None>].upkeep;
 
     this.traffic.refreshBuildings((idx) => this.capacity(idx));
     const prevPop = this.stats.population;
@@ -390,6 +450,39 @@ export class Simulation {
     }
   }
 
+  // ---------- Équipements ----------
+
+  estimateService(idx: number, type: Service): { ok: boolean; reason: string | null; cost: number } {
+    const w = this.world;
+    const i = idx % w.size, j = Math.floor(idx / w.size);
+    const info = SERVICE_INFO[type as Exclude<Service, Service.None>];
+    const reason = w.serviceBlocker(i, j, type);
+    if (reason) return { ok: false, reason, cost: info.cost };
+    if (info.cost > this.money) return { ok: false, reason: 'Fonds insuffisants', cost: info.cost };
+    return { ok: true, reason: null, cost: info.cost };
+  }
+
+  placeService(idx: number, type: Service): boolean {
+    const w = this.world;
+    const est = this.estimateService(idx, type);
+    if (!est.ok) {
+      this.events.emit('notify', { text: est.reason!, kind: 'warn' });
+      return false;
+    }
+    const hadBuilding = w.bState[idx] !== BuildState.Empty;
+    if (w.zones[idx]) { w.zones[idx] = Zone.None; this.zonedDirty = true; }
+    this.clearBuilding(idx);
+    if (w.trees[idx]) { w.trees[idx] = 0; this.events.emit('treesChanged', undefined); }
+    w.service[idx] = type;
+    this.spend(est.cost);
+    this.recomputeStats();
+    this.events.emit('servicesChanged', undefined);
+    this.events.emit('zonesChanged', undefined);
+    if (hadBuilding) this.events.emit('buildingsChanged', { tiles: [idx] });
+    this.events.emit('notify', { text: `${SERVICE_INFO[type as Exclude<Service, Service.None>].name} construit(e)`, kind: 'info' });
+    return true;
+  }
+
   // ---------- Démolition ----------
 
   estimateBulldoze(area: number[]): { refund: number; cost: number; tiles: number[] } {
@@ -399,6 +492,9 @@ export class Simulation {
     for (const idx of area) {
       if (w.tiles[idx] === Tile.Road) {
         refund += Math.round(ROAD_COST * ROAD_REFUND);
+        tiles.push(idx);
+      } else if (w.service[idx]) {
+        refund += Math.round(SERVICE_INFO[w.service[idx] as Exclude<Service, Service.None>].cost * 0.25);
         tiles.push(idx);
       } else if (w.bState[idx]) {
         cost += 5 * Math.max(1, w.bLevel[idx]);
@@ -421,11 +517,14 @@ export class Simulation {
     }
     const roads: number[] = [];
     const buildings: number[] = [];
-    let trees = false;
+    let trees = false, services = false;
     for (const idx of est.tiles) {
       if (w.tiles[idx] === Tile.Road) {
         w.tiles[idx] = Tile.Empty;
         roads.push(idx);
+      } else if (w.service[idx]) {
+        w.service[idx] = Service.None;
+        services = true;
       } else if (w.bState[idx]) {
         this.clearBuilding(idx);
         buildings.push(idx);
@@ -442,5 +541,9 @@ export class Simulation {
       this.events.emit('buildingsChanged', { tiles: buildings });
     }
     if (trees) this.events.emit('treesChanged', undefined);
+    if (services) {
+      this.recomputeStats();
+      this.events.emit('servicesChanged', undefined);
+    }
   }
 }

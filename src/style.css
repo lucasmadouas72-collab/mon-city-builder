@@ -13,6 +13,7 @@
   color: var(--text);
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: #cfe3ef; user-select: none; }
 #game, #game canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 #hud { position: fixed; inset: 0; pointer-events: none; }
@@ -136,3 +137,46 @@ kbd {
 .views button svg { width: 17px; height: 17px; }
 .views button:hover { color: var(--text); }
 .views button.active { color: var(--bg-solid); background: #facc15; }
+
+/* ---- Phase 4 : réseaux, services, menus ---- */
+.toolbar button.open { background: rgba(255,255,255,0.08); color: var(--text); }
+.flyout {
+  position: absolute; bottom: 96px; left: 50%; transform: translateX(-50%);
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px;
+  padding: 8px; width: min(820px, calc(100vw - 24px));
+}
+.fly-title { grid-column: 1 / -1; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); padding: 2px 6px 4px; }
+.flyout button {
+  display: grid; grid-template-columns: 12px 1fr; grid-template-rows: auto auto; column-gap: 9px; row-gap: 2px;
+  text-align: left; padding: 8px 10px; border-radius: 9px; align-items: center;
+}
+.flyout button i { grid-row: 1 / 3; width: 12px; height: 12px; border-radius: 4px; background: var(--c, var(--accent)); }
+.flyout button .name { font-size: 13px; font-weight: 650; display: flex; gap: 6px; align-items: center; }
+.flyout button .sub { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.flyout button:hover { background: rgba(255,255,255,0.06); }
+.flyout button.active { background: color-mix(in srgb, var(--c, var(--accent)) 18%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c, var(--accent)) 55%, transparent); }
+.flyout button.locked { opacity: 0.4; }
+
+.views { position: relative; }
+.views button#views-btn.active { color: var(--bg-solid); background: #facc15; }
+.views-menu { position: absolute; top: 44px; right: 0; display: flex; flex-direction: column; padding: 6px; min-width: 170px; z-index: 5; }
+.views-menu button { text-align: left; padding: 7px 10px; border-radius: 7px; font-size: 13px; color: var(--muted); height: auto; background: none; }
+.views-menu button:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+.views-menu button.active { color: #facc15; }
+
+.status { position: absolute; top: 78px; left: 12px; width: 250px; padding: 10px 14px 12px; font-size: 12.5px; display: flex; flex-direction: column; gap: 7px; }
+.status-title { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-top: 2px; }
+.util-head { display: flex; justify-content: space-between; }
+.util-head b { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--muted); }
+.util-bar { height: 5px; border-radius: 3px; background: rgba(255,255,255,0.08); overflow: hidden; margin-top: 3px; }
+.util-bar i { display: block; height: 100%; background: var(--c); transition: width 0.4s; }
+.util.short .util-head b { color: var(--bad); }
+.util.short .util-bar { background: rgba(248,113,113,0.35); }
+.cov { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 12px; }
+.cov div { display: flex; justify-content: space-between; }
+.cov b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.info dd.bad { color: var(--bad); font-weight: 600; }
+.info .u { display: inline-grid; place-items: center; padding: 0 4px; height: 17px; margin-left: 3px; border-radius: 5px; font-size: 10px; font-weight: 800; }
+.info .u.ok { background: var(--c); color: #111; }
+.info .u.ko { background: rgba(248,113,113,0.2); color: var(--bad); text-decoration: line-through; }
+@media (max-width: 1100px) { .status { display: none; } }

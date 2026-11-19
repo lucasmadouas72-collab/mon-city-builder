@@ -4,12 +4,22 @@ import { OverlayColor } from '../render/Overlay';
 import type { Simulation } from '../sim/Simulation';
 import type { CameraController } from './CameraController';
 import { Zone, ZONE_INFO, type ZoneType } from '../sim/zones';
+import { SERVICE_INFO, type Service } from '../sim/services';
 
-export type ToolId = 'select' | 'road' | 'zoneR' | 'zoneC' | 'zoneI' | 'zoneO' | 'dezone' | 'bulldoze';
+export type ToolId = 'select' | 'road' | 'zoneR' | 'zoneC' | 'zoneI' | 'zoneO' | 'dezone' | 'bulldoze' | `svc${number}`;
+
+/** Équipement placé par un outil `svcN`, ou null. */
+export const toolService = (t: ToolId): Service | null => (t.startsWith('svc') ? (Number(t.slice(3)) as Service) : null);
 
 /** Zone appliquée par chaque outil de zonage. */
 export const TOOL_ZONE: Partial<Record<ToolId, Zone>> = {
   zoneR: Zone.Residential, zoneC: Zone.Commercial, zoneI: Zone.Industrial, zoneO: Zone.Office, dezone: Zone.None,
+};
+const svcColors = new Map<string, THREE.Color>();
+const serviceColor = (hex: string) => {
+  let c = svcColors.get(hex);
+  if (!c) { c = new THREE.Color(hex).multiplyScalar(0.7); svcColors.set(hex, c); }
+  return c;
 };
 const zoneColors = new Map<Zone, THREE.Color>();
 const zoneColor = (z: Zone) => {
@@ -63,6 +73,7 @@ export class ToolManager {
     sim.events.on('roadsChanged', () => this.refresh());
     sim.events.on('moneyChanged', () => this.refresh());
     sim.events.on('zonesChanged', () => this.refresh());
+    sim.events.on('servicesChanged', () => this.refresh());
   }
 
   setTool(tool: ToolId): void {
@@ -123,6 +134,7 @@ export class ToolManager {
       if (this.tool === 'road') this.sim.buildRoads(tiles);
       else if (this.tool === 'bulldoze') this.sim.bulldoze(tiles);
       else if (zone !== undefined) this.sim.applyZone(tiles, zone);
+      else if (toolService(this.tool)) this.sim.placeService(tiles[0], toolService(this.tool)!);
     }
     this.refresh();
   }
@@ -183,6 +195,26 @@ export class ToolManager {
         const net = est.refund - est.cost;
         this.tip = { text: net >= 0 ? `Démolir · +${fmt(net)}` : `Défricher · ${fmt(-net)}`, kind: 'info' };
       }
+    } else if (toolService(this.tool)) {
+      const type = toolService(this.tool)!;
+      const info = SERVICE_INFO[type as Exclude<Service, 0>];
+      const idx = tiles[0];
+      const est = this.sim.estimateService(idx, type);
+      const layers: Array<[number[], THREE.Color]> = [];
+      if (info.radius) {
+        const w = this.sim.world;
+        const i = idx % w.size, j = Math.floor(idx / w.size), r = info.radius;
+        const ring: number[] = [];
+        for (let b = j - r; b <= j + r; b++) for (let a = i - r; a <= i + r; a++) {
+          if (w.inBounds(a, b) && (a - i) ** 2 + (b - j) ** 2 <= r * r && (a !== i || b !== j)) ring.push(w.index(a, b));
+        }
+        layers.push([ring, serviceColor(info.color)]);
+      }
+      layers.push([[idx], est.ok ? OverlayColor.valid : OverlayColor.invalid]);
+      ov.set(layers);
+      this.tip = est.ok
+        ? { text: `${info.name} · ${fmt(info.cost)} · ${fmt(info.upkeep)}/mois`, kind: 'ok' }
+        : { text: est.reason ?? '', kind: 'bad' };
     } else if (TOOL_ZONE[this.tool] !== undefined) {
       const zone = TOOL_ZONE[this.tool]!;
       const est = this.sim.estimateZone(tiles, zone);

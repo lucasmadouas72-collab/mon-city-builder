@@ -20,6 +20,8 @@ export interface GameEvents extends Record<string, unknown> {
   roadsChanged: { tiles: number[] };
   treesChanged: void;
   zonesChanged: void;
+  servicesChanged: void;
+  firesChanged: void;
   buildingsChanged: { tiles: number[] };
   statsChanged: import('../sim/Simulation').CityStats;
   moneyChanged: number;

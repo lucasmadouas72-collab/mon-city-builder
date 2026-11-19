@@ -8,9 +8,9 @@ import { Zone, type ZoneType } from '../sim/zones';
  * façade vers +z, sol du terrain à y = 0. Couleurs stockées dans les sommets.
  */
 
-const FLOOR = 0.13;
+export const FLOOR = 0.13;
 
-class Builder {
+export class Builder {
   parts: THREE.BufferGeometry[] = [];
 
   add(geo: THREE.BufferGeometry, color: string, x = 0, y = 0, z = 0, ry = 0): this {
@@ -80,7 +80,7 @@ const LOT: Record<ZoneType, string> = {
 };
 
 function base(b: Builder, zone: ZoneType): Builder {
-  b.box(0.9, 1.2, 0.9, 0, -1.2, 0, '#8d877b'); // fondation (cachée dans le relief)
+  b.box(0.9, 1.2, 0.9, 0, -1.2, 0, '#b3a994'); // fondation (cachée dans le relief)
   return b.box(0.94, 0.03, 0.94, 0, 0, 0, LOT[zone]);
 }
 
@@ -213,7 +213,7 @@ function office(level: number, r: () => number): THREE.BufferGeometry {
 /** Chantier : dalle, ossature, grue pour les niveaux élevés. */
 function construction(level: number): THREE.BufferGeometry {
   const b = new Builder();
-  b.box(0.9, 1.2, 0.9, 0, -1.2, 0, '#8d877b');
+  b.box(0.9, 1.2, 0.9, 0, -1.2, 0, '#b3a994');
   b.box(0.94, 0.03, 0.94, 0, 0, 0, '#a58b6c');
   const h = 0.12 + level * 0.12;
   b.box(0.6, 0.04, 0.5, 0, 0.03, -0.04, '#b7b2a8');

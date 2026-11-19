@@ -1,6 +1,7 @@
 import { MAP_SIZE, MAX_ROAD_SLOPE, SEA_LEVEL } from '../config';
 import { fbm, rng } from '../core/noise';
 import { MAX_BUILD_SLOPE, ZONE_DEPTH } from './zones';
+import { SERVICE_INFO, type Service } from './services';
 
 export const enum Tile {
   Empty = 0,
@@ -32,6 +33,8 @@ export class World {
   readonly bTimer: Uint16Array;
   /** Distance (en cases) jusqu'à la route la plus proche, 255 si trop loin. */
   readonly roadDist: Uint8Array;
+  /** Bâtiment de service présent sur la case (Service.None sinon). */
+  readonly service: Uint8Array;
 
   constructor(seed = 1337) {
     this.seed = seed;
@@ -45,6 +48,7 @@ export class World {
     this.bVariant = new Uint8Array(n * n);
     this.bTimer = new Uint16Array(n * n);
     this.roadDist = new Uint8Array(n * n).fill(255);
+    this.service = new Uint8Array(n * n);
     this.generate();
   }
 
@@ -76,6 +80,7 @@ export class World {
   zoneBlocker(i: number, j: number): string | null {
     if (!this.inBounds(i, j)) return 'Hors de la carte';
     if (this.isRoad(i, j)) return 'Case occupée par une route';
+    if (this.service[this.index(i, j)]) return 'Case occupée par un équipement';
     if (this.isWater(i, j)) return "Impossible de zoner sur l'eau";
     const [lo, hi] = this.tileMinMax(i, j);
     if (hi - lo > MAX_BUILD_SLOPE) return 'Terrain trop pentu';
@@ -189,8 +194,27 @@ export class World {
   roadBlocker(i: number, j: number): string | null {
     if (!this.inBounds(i, j)) return 'Hors de la carte';
     if (this.isWater(i, j)) return "Impossible de construire sur l'eau";
+    if (this.service[this.index(i, j)]) return 'Case occupée par un équipement';
     const [lo, hi] = this.tileMinMax(i, j);
     if (hi - lo > MAX_ROAD_SLOPE) return 'Terrain trop pentu';
+    return null;
+  }
+
+  /** Raison pour laquelle on ne peut pas placer cet équipement, ou null. */
+  serviceBlocker(i: number, j: number, s: Service): string | null {
+    if (!this.inBounds(i, j)) return 'Hors de la carte';
+    const idx = this.index(i, j);
+    if (this.isRoad(i, j)) return 'Case occupée par une route';
+    if (this.service[idx]) return 'Case occupée par un équipement';
+    if (this.isWater(i, j)) return "Impossible de construire sur l'eau";
+    const [lo, hi] = this.tileMinMax(i, j);
+    if (hi - lo > MAX_BUILD_SLOPE) return 'Terrain trop pentu';
+    if (this.roadDist[idx] !== 1) return 'Doit toucher une route';
+    if (SERVICE_INFO[s as Exclude<Service, 0>].nearWater) {
+      let near = false;
+      for (let b = j - 2; b <= j + 2 && !near; b++) for (let a = i - 2; a <= i + 2; a++) if (this.inBounds(a, b) && this.isWater(a, b)) { near = true; break; }
+      if (!near) return "Doit être à moins de 2 cases de l'eau";
+    }
     return null;
   }
 

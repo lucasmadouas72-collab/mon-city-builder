@@ -24,7 +24,7 @@ Puis ouvrir l'adresse affichée (http://localhost:5173).
 | Outils | 1 Sélection · 2 Route · 3 Résidentiel · 4 Commercial · 5 Industriel · 6 Bureaux · 7 Dézoner · 8 Démolir |
 | Zoner | cliquer-glisser une zone près d'une route |
 | Tracer une route | cliquer-glisser |
-| Vue trafic | T |
+| Vue trafic | T (autres vues : bouton « Vues ») |
 | Pause | Espace |
 | Annuler | Échap |
 
@@ -33,7 +33,7 @@ Puis ouvrir l'adresse affichée (http://localhost:5173).
 - [x] **Phase 1** : rendu 3D low-poly, relief avec rivière et lac, forêts, caméra, routes, démolition, budget
 - [x] **Phase 2** : zonage (R, C, I, bureaux), demande, bâtiments procéduraux sur 3 niveaux, valeur foncière, impôts
 - [x] **Phase 3** : trajets domicile/travail, courses et livraisons, itinéraires A* évitant les bouchons, conduite à droite, files et priorités aux carrefours, vue trafic
-- [ ] Phase 4 : réseaux (eau, électricité) et services
+- [x] **Phase 4** : électricité, eau, égouts, déchets (distribués par le réseau routier), santé, école, police, pompiers, parcs, bonheur, incendies, vues de données
 - [ ] Phase 5 : économie complète, transports en commun, vues de données
 - [ ] Phase 6 : jour/nuit, effets, sauvegarde, optimisation
 
