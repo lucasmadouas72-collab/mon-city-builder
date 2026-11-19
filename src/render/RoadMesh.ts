@@ -248,8 +248,8 @@ export class RoadMesh {
     const asphalt = type === RoadType.Street ? ASPHALT : ASPHALT_DARK;
     if (deg <= 1) {
       // Impasse ou case isolée : rond de chaussée bordé de trottoir
-      if (type !== RoadType.Highway) this.disc(cx, cz, 0.5, Y_WALK - 0.001, SIDEWALK, 20);
-      this.disc(cx, cz, type === RoadType.Highway ? 0.5 : 0.34, Y_ROAD + 0.002, asphalt, 20);
+      // Impasse : demi-tour arrondi, de la largeur de la chaussée
+      this.disc(cx, cz, 0.42, Y_ROAD + 0.002, asphalt, 20);
       return;
     }
     if (deg < 3) return;

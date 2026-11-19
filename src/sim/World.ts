@@ -59,6 +59,18 @@ export class World {
   readonly oneway: Uint8Array;
   /** Liaisons routières vers les 8 cases voisines (bit = 1 << indice de direction). */
   readonly links: Uint8Array;
+  /** Dégâts des bâtiments (0 à 100 %). */
+  readonly bDamage: Uint8Array;
+  /** Gravats laissés par un bâtiment détruit. */
+  readonly rubble: Uint8Array;
+  /** Dégâts des routes (0 à 100 %) : vitesse réduite jusqu'à la réparation. */
+  readonly roadDamage: Uint8Array;
+  /** Case inondée (jours restants). */
+  readonly flooded: Uint8Array;
+  /** Feu de forêt (jours restants). */
+  readonly forestFire: Uint8Array;
+  /** Pollution des sols (s'accumule lentement, 0 à 1). */
+  readonly soilPol: Float32Array;
   /** Feux tricolores sur un carrefour. */
   readonly lights: Uint8Array;
 
@@ -83,6 +95,12 @@ export class World {
     this.oneway = new Uint8Array(n * n);
     this.lights = new Uint8Array(n * n);
     this.links = new Uint8Array(n * n);
+    this.bDamage = new Uint8Array(n * n);
+    this.rubble = new Uint8Array(n * n);
+    this.roadDamage = new Uint8Array(n * n);
+    this.flooded = new Uint8Array(n * n);
+    this.forestFire = new Uint8Array(n * n);
+    this.soilPol = new Float32Array(n * n);
     if (generate) this.generate();
   }
 
@@ -351,7 +369,7 @@ export class World {
 
   /** Une voiture peut-elle circuler sur cette case ? */
   carsAllowed(k: number): boolean {
-    return this.tiles[k] === Tile.Road && this.roadType[k] !== RoadType.Pedestrian;
+    return this.tiles[k] === Tile.Road && this.roadType[k] !== RoadType.Pedestrian && !this.flooded[k];
   }
 
   /** Raison pour laquelle on ne peut pas placer cet équipement, ou null. */

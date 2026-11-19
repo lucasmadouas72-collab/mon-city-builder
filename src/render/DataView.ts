@@ -6,7 +6,7 @@ import { Overlay } from './Overlay';
 
 export type ViewMode =
   | 'none' | 'traffic' | 'power' | 'water' | 'sewage' | 'garbage'
-  | 'health' | 'education' | 'police' | 'fire' | 'park' | 'happiness' | 'land' | 'transport' | 'air' | 'noise' | 'crime';
+  | 'health' | 'education' | 'police' | 'fire' | 'park' | 'happiness' | 'land' | 'transport' | 'air' | 'noise' | 'crime' | 'waterPol' | 'soil' | 'light' | 'damage' | 'risk';
 
 export const VIEW_LABELS: Array<[ViewMode, string]> = [
   ['traffic', 'Trafic'],
@@ -23,6 +23,11 @@ export const VIEW_LABELS: Array<[ViewMode, string]> = [
   ['park', 'Parcs'],
   ['air', "Pollution de l'air"],
   ['noise', 'Pollution sonore'],
+  ['waterPol', "Pollution de l'eau"],
+  ['soil', 'Pollution des sols'],
+  ['light', 'Pollution lumineuse'],
+  ['damage', 'Dégâts et reconstruction'],
+  ['risk', 'Risques naturels'],
   ['happiness', 'Bonheur'],
   ['land', 'Valeur foncière'],
 ];
@@ -73,6 +78,11 @@ const LEGENDS: Record<Exclude<ViewMode, 'none'>, Legend> = {
   air: { title: 'Pollution de l’air', unit: 'indice 0 à 100 %', items: [['#fde68a', 'Faible'], ['#fbbf24', 'Modérée'], ['#f97316', 'Forte'], ['#dc2626', 'Très forte'], ['#7f1d1d', 'Dangereuse']], explanation: 'Émise par l’industrie, les centrales et le trafic. Elle rend des habitants malades et fait baisser la valeur foncière.' },
   noise: { title: 'Pollution sonore', unit: 'indice 0 à 100 %', items: [['#fde68a', 'Faible'], ['#fbbf24', 'Modérée'], ['#f97316', 'Forte'], ['#dc2626', 'Très forte'], ['#7f1d1d', 'Insupportable']], explanation: 'Due aux routes chargées (surtout les autoroutes), à l’industrie et aux commerces.' },
   crime: { title: 'Délinquance', unit: 'risque 0 à 100 %', items: [['#22c55e', 'Faible'], ['#a3e635', 'Modérée'], ['#facc15', 'Notable'], ['#f97316', 'Forte'], ['#ef4444', 'Très forte']], explanation: 'Calculée à partir du chômage, de la valeur foncière, de la présence de la police et des délits non élucidés.' },
+  waterPol: { title: 'Pollution de l’eau', unit: 'indice 0 à 100 % (cases d’eau)', items: [['#fde68a', 'Faible'], ['#f97316', 'Forte'], ['#7f1d1d', 'Très forte'], ['#a855f7', 'Bâtiment recevant une eau contaminée']], explanation: 'Les eaux usées non traitées et l’industrie polluent l’eau. Une station de pompage proche d’une eau polluée distribue une eau contaminée qui rend malade.' },
+  soil: { title: 'Pollution des sols', unit: 'indice 0 à 100 % (s’accumule)', items: [['#fde68a', 'Faible'], ['#f97316', 'Forte'], ['#7f1d1d', 'Très forte']], explanation: 'S’accumule lentement autour de l’industrie, des centrales et des centres de tri, et lors des accidents industriels. Elle baisse la valeur foncière et la santé.' },
+  light: { title: 'Pollution lumineuse', unit: 'indice 0 à 100 % (la nuit)', items: [['#fef9c3', 'Faible'], ['#facc15', 'Modérée'], ['#f59e0b', 'Forte']], explanation: 'Éclairage des commerces, bureaux et grands axes. Elle gêne le sommeil des habitants voisins.' },
+  damage: { title: 'Dégâts', unit: '0 à 100 %', items: [['#facc15', 'Bâtiment légèrement endommagé'], ['#f97316', 'Gravement endommagé'], ['#57534e', 'Gravats (déblaiement en cours)'], ['#fb923c', 'Route abîmée (ralentie)'], ['#3b82c4', 'Inondé']], explanation: 'Les réparations sont automatiques et facturées chaque mois (poste « Réparations et reconstruction »). Le budget Pompiers accélère les réparations.' },
+  risk: { title: 'Risques naturels', unit: 'zones exposées', items: [['#3b82c4', 'Zone inondable non protégée'], ['#14b8a6', 'Zone inondable protégée par une digue'], ['#d97706', 'Forêt dense (risque de feu)']], explanation: 'Les cases basses proches de l’eau peuvent être inondées lors des fortes pluies. Une digue protège 6 cases autour d’elle. Les forêts denses brûlent lors des canicules.' },
   happiness: { title: 'Bonheur', unit: '0 à 100 %', items: [['#ef4444', 'Très mécontent'], ['#f97316', 'Mécontent'], ['#facc15', 'Neutre'], ['#a3e635', 'Satisfait'], ['#22c55e', 'Très satisfait']], explanation: 'Combine réseaux, services, pollution, délinquance, espaces verts, impôts et météo.' },
   land: { title: 'Valeur foncière', unit: 'indice relatif', items: [['#ef4444', 'Très basse'], ['#f97316', 'Basse'], ['#facc15', 'Moyenne'], ['#a3e635', 'Élevée'], ['#22c55e', 'Très élevée']], explanation: 'Augmente avec l’eau, la verdure, les services et les voies piétonnes ; baisse près de l’industrie, des autoroutes et de la pollution.' },
 };
@@ -145,6 +155,7 @@ export class DataView {
     };
     const ramp = (v: number) => RAMP[Math.max(0, Math.min(4, Math.floor(v * 5)))];
     const m = this.mode;
+    const levees = m === 'risk' ? this.sim.disasters.levees() : [];
     for (let idx = 0; idx < w.tiles.length; idx++) {
       const built = w.bState[idx] === BuildState.Built;
       if (m === 'traffic') {
@@ -160,6 +171,26 @@ export class DataView {
           add(L && L.capacity ? LOAD(L.used / L.capacity) : '#ffffff', idx);
         } else if (ut.coverage[idx] & bit) add(SERVICE_INFO[svc as Exclude<Service, 0>].color, idx);
         else if (built) add('#7f1d1d', idx);
+      } else if (m === 'waterPol') {
+        if (ut.waterPol[idx] > 0.05) add(ut.waterPol[idx] > 0.6 ? '#7f1d1d' : ut.waterPol[idx] > 0.3 ? '#f97316' : '#fde68a', idx);
+        else if (built && ut.contaminated[idx]) add('#a855f7', idx);
+      } else if (m === 'soil') {
+        const v = w.soilPol[idx];
+        if (v > 0.05) add(v > 0.5 ? '#7f1d1d' : v > 0.2 ? '#f97316' : '#fde68a', idx);
+      } else if (m === 'light') {
+        const v = ut.light[idx];
+        if (v > 0.05) add(v > 0.4 ? '#f59e0b' : v > 0.2 ? '#facc15' : '#fef9c3', idx);
+      } else if (m === 'damage') {
+        if (w.flooded[idx]) add('#3b82c4', idx);
+        else if (w.rubble[idx]) add('#57534e', idx);
+        else if (w.bDamage[idx]) add(w.bDamage[idx] > 50 ? '#f97316' : '#facc15', idx);
+        else if (w.roadDamage[idx]) add('#fb923c', idx);
+      } else if (m === 'risk') {
+        if (w.trees[idx] >= 2) add('#d97706', idx);
+        else if (built || w.zones[idx] || w.tiles[idx]) {
+          const r = this.sim.disasters.floodRisk(idx, levees);
+          if (r) add(r === 2 ? '#14b8a6' : '#3b82c4', idx);
+        }
       } else if (m === 'crime') {
         if (built) add(RAMP[4 - Math.max(0, Math.min(4, Math.floor(ut.crime[idx] * 5)))], idx);
       } else if (m === 'happiness') {

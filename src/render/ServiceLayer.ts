@@ -109,8 +109,8 @@ export class ServiceLayer {
 
   refreshFires(): void {
     this.burning = [];
-    const f = this.utilities.fire;
-    for (let k = 0; k < f.length; k++) if (f[k]) this.burning.push(k);
+    const f = this.utilities.fire, ff = this.world.forestFire;
+    for (let k = 0; k < f.length; k++) if (f[k] || ff[k]) this.burning.push(k);
   }
 
   private topOf(idx: number): number {

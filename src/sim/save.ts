@@ -5,9 +5,9 @@ import { World } from './World';
 /** Sauvegarde complète d'une partie, au format JSON (tableaux encodés en base64). */
 
 const VERSION = 1;
-const ARRAYS = ['heights', 'tiles', 'trees', 'zones', 'bState', 'bLevel', 'bVariant', 'bTimer', 'service', 'busStop', 'roadType', 'oneway', 'lights', 'links'] as const;
+const ARRAYS = ['heights', 'tiles', 'trees', 'zones', 'bState', 'bLevel', 'bVariant', 'bTimer', 'service', 'busStop', 'roadType', 'oneway', 'lights', 'links', 'bDamage', 'rubble', 'roadDamage', 'soilPol'] as const;
 /** Tableaux ajoutés après la première version (absents des anciennes sauvegardes). */
-const OPTIONAL = new Set(['roadType', 'oneway', 'lights', 'links']);
+const OPTIONAL = new Set(['roadType', 'oneway', 'lights', 'links', 'bDamage', 'rubble', 'roadDamage', 'soilPol']);
 type ArrayKey = (typeof ARRAYS)[number];
 
 function toB64(arr: ArrayBufferView): string {

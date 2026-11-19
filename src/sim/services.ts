@@ -13,6 +13,8 @@ export const enum Service {
   FireStation = 9,
   Park = 10,
   MetroStation = 11,
+  Levee = 12,
+  WarningCenter = 13,
 }
 
 /** Ressources distribuées par le réseau routier. */
@@ -126,6 +128,14 @@ export const SERVICE_INFO: Record<Exclude<Service, Service.None>, ServiceInfo> =
   [Service.MetroStation]: {
     name: 'Station de métro', category: 'transport', description: 'Reliez les stations par une ligne de métro.',
     cost: 6500, upkeep: 180, color: '#e879f9', budget: 'transport', unlockPop: 3000,
+  },
+  [Service.Levee]: {
+    name: 'Digue', category: 'services', description: 'Protège des inondations les cases basses à moins de 6 cases. À placer au bord de l’eau.',
+    cost: 1500, upkeep: 30, color: '#94a3b8', budget: 'utilities', unlockPop: 0, nearWater: true, radius: 6,
+  },
+  [Service.WarningCenter]: {
+    name: 'Centre d’alerte', category: 'services', description: 'Annonce les catastrophes à l’avance : évacuation possible, moins de victimes et de dégâts.',
+    cost: 5000, upkeep: 200, color: '#f472b6', budget: 'fire', unlockPop: 600,
   },
 };
 

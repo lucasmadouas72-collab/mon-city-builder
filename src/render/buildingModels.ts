@@ -229,12 +229,26 @@ function construction(level: number): THREE.BufferGeometry {
   return b.build();
 }
 
+/** Gravats d'un bâtiment détruit. */
+function rubble(): THREE.BufferGeometry {
+  const b = new Builder();
+  b.box(0.9, 1.2, 0.9, 0, -1.2, 0, '#b3a994');
+  b.box(0.94, 0.03, 0.94, 0, 0, 0, '#8a8278');
+  b.add(new THREE.ConeGeometry(0.28, 0.16, 6), '#7d756b', -0.12, 0.11, -0.05);
+  b.add(new THREE.ConeGeometry(0.2, 0.12, 5), '#5f5a54', 0.18, 0.09, 0.12);
+  b.add(new THREE.BoxGeometry(0.22, 0.05, 0.06).rotateY(0.6).rotateZ(0.3), '#6b4a32', 0.1, 0.08, -0.2);
+  b.add(new THREE.BoxGeometry(0.18, 0.04, 0.05).rotateY(-0.8), '#9aa1a8', -0.22, 0.06, 0.2);
+  b.box(0.06, 0.18, 0.06, 0.28, 0.03, -0.28, '#8f8a82');
+  return b.build();
+}
+
 export const VARIANTS = 4;
 
 export interface ModelSet {
   /** key `${zone}-${level}-${variant}` */
   buildings: Map<string, THREE.BufferGeometry>;
   construction: THREE.BufferGeometry[]; // indexé par niveau 1-3 (0 inutilisé)
+  rubble: THREE.BufferGeometry;
 }
 
 export function createModels(): ModelSet {
@@ -253,5 +267,5 @@ export function createModels(): ModelSet {
     }
   }
   const constructionModels = [construction(1), construction(1), construction(2), construction(3)];
-  return { buildings, construction: constructionModels };
+  return { buildings, construction: constructionModels, rubble: rubble() };
 }

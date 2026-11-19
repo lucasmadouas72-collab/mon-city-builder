@@ -44,6 +44,11 @@ export class Utilities {
   readonly fire: Uint8Array;
   /** Pollution de l'air et sonore (0 à ~1). */
   readonly air: Float32Array;
+  /** Pollution de l'eau (cases d'eau) et pollution lumineuse (nuit). */
+  readonly waterPol: Float32Array = new Float32Array(0);
+  readonly light: Float32Array = new Float32Array(0);
+  /** Bâtiments recevant une eau contaminée. */
+  readonly contaminated: Uint8Array = new Uint8Array(0);
   readonly noise: Float32Array;
   /** Densité de trafic par case (fournie par le trafic). */
   trafficDensity: Float32Array | null = null;
@@ -54,6 +59,10 @@ export class Utilities {
   budget: (key: BudgetKey) => number = () => 1;
   /** Ajustement global du bonheur (impôts…). */
   happinessOffset = 0;
+  /** Équipements en panne (catastrophe). */
+  offline: Map<number, number> = new Map();
+  /** Production des éoliennes selon le vent. */
+  windFactor = 1;
   /** Part d'élèves et de malades dans la population (fournie par la démographie). */
   studentShare = 0.25;
   sickShare = 0.025;
@@ -76,6 +85,9 @@ export class Utilities {
     this.fire = new Uint8Array(n);
     this.air = new Float32Array(n);
     (this as { crime: Float32Array }).crime = new Float32Array(n);
+    (this as { waterPol: Float32Array }).waterPol = new Float32Array(n);
+    (this as { light: Float32Array }).light = new Float32Array(n);
+    (this as { contaminated: Uint8Array }).contaminated = new Uint8Array(n);
     this.noise = new Float32Array(n);
     this.component = new Int32Array(n);
   }
@@ -132,10 +144,56 @@ export class Utilities {
       // Les arbres et les parcs absorbent un peu de pollution
       if (w.trees[idx]) air[idx] -= 0.02 * w.trees[idx];
     }
+    // Eau : rejets d'égouts non traités et industries proches, diffusés dans les cases d'eau voisines
+    const wp = this.waterPol, light = this.light;
+    wp.fill(0); light.fill(0);
+    const splatWater = (i: number, j: number, amount: number, r: number) => {
+      for (let b = Math.max(0, j - r); b <= Math.min(n - 1, j + r); b++) for (let a = Math.max(0, i - r); a <= Math.min(n - 1, i + r); a++) {
+        if (!w.isWater(a, b)) continue;
+        const d = Math.hypot(a - i, b - j);
+        if (d <= r) wp[b * n + a] += amount * (1 - d / (r + 1));
+      }
+    };
+    for (let idx = 0; idx < w.tiles.length; idx++) {
+      const i = idx % n, j = (idx - i) / n;
+      if (w.bState[idx] === BuildState.Built) {
+        const z = w.zones[idx], lvl = w.bLevel[idx];
+        if (!(this.served[idx] & (1 << Utility.Sewage))) splatWater(i, j, 0.03 * lvl, 9);
+        if (z === Zone.Industrial) splatWater(i, j, 0.05 * lvl, 4);
+        if (z === Zone.Commercial || z === Zone.Office) splat(light, i, j, 0.05 * lvl, 3);
+      }
+      if (w.service[idx] === Service.Sewage) splatWater(i, j, 0.04, 3);
+      if (w.tiles[idx] === 1 && (w.roadType[idx] === 2 || w.roadType[idx] === 3)) light[idx] += 0.04;
+    }
+    for (let k = 0; k < wp.length; k++) { wp[k] = Math.min(1, wp[k]); light[k] = Math.min(1, light[k]); }
     for (let k = 0; k < air.length; k++) {
       if (this.coverage[k] & Coverage.Park) { air[k] *= 0.8; noise[k] *= 0.85; }
       air[k] = Math.max(0, Math.min(1, air[k]));
       noise[k] = Math.max(0, Math.min(1, noise[k]));
+    }
+  }
+
+  /** Une station de pompage proche d'une eau polluée distribue une eau contaminée sur son réseau. */
+  private computeContamination(_supply: Map<number, number[]>): void {
+    const w = this.world, n = w.size;
+    const bad = new Map<number, [number, number]>(); // réseau -> [capacité contaminée, capacité totale]
+    for (let s = 0; s < w.service.length; s++) {
+      if (w.service[s] !== Service.WaterPump) continue;
+      const net = this.networkOf(s);
+      if (net < 0) continue;
+      const i = s % n, j = (s - i) / n;
+      let worst = 0;
+      for (let b = j - 3; b <= j + 3; b++) for (let a = i - 3; a <= i + 3; a++) if (w.inBounds(a, b)) worst = Math.max(worst, this.waterPol[b * n + a]);
+      const e = bad.get(net) ?? [0, 0];
+      e[1] += 1;
+      if (worst > 0.3) e[0] += 1;
+      bad.set(net, e);
+    }
+    this.contaminated.fill(0);
+    for (let k = 0; k < w.bState.length; k++) {
+      if (w.bState[k] !== BuildState.Built || !(this.served[k] & (1 << Utility.Water))) continue;
+      const e = bad.get(this.networkOf(k));
+      if (e && e[0] && hash01(k, 9) < e[0] / e[1]) this.contaminated[k] = 1;
     }
   }
 
@@ -185,7 +243,8 @@ export class Utilities {
       const i = idx % n, j = (idx - i) / n;
       if (info.utility !== undefined) {
         const net = this.networkOf(idx);
-        const cap = info.capacity! * this.budget(info.budget);
+        const off = this.offline.has(idx) ? 0 : 1;
+        const cap = info.capacity! * this.budget(info.budget) * off * (s === Service.WindTurbine ? this.windFactor : 1);
         if (net >= 0) get(supply, net)[info.utility] += cap;
         totalSupply[info.utility] += cap;
       }
@@ -236,6 +295,7 @@ export class Utilities {
     }
 
     this.computePollution();
+    this.computeContamination(supply);
 
     // Distribution : si la production manque, une partie des bâtiments n'est pas desservie
     const servedCount = [0, 0, 0, 0];
@@ -272,6 +332,9 @@ export class Utilities {
       h -= this.nuisance[idx];
       h -= Math.min(0.35, this.air[idx] * 0.45 + this.noise[idx] * 0.25);
       h -= this.crime[idx] * 0.18;
+      if (this.contaminated[idx]) h -= 0.12;
+      h -= w.soilPol[idx] * 0.12 + (w.zones[idx] === Zone.Residential ? this.light[idx] * 0.05 : 0);
+      if (w.bDamage[idx]) h -= w.bDamage[idx] / 400;
       h += this.happinessOffset;
       if (this.fire[idx]) h -= 0.3;
       h = Math.max(0, Math.min(1, h));

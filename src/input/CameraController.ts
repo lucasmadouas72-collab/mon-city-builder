@@ -87,6 +87,15 @@ export class CameraController {
     return true;
   }
 
+  private shakeLeft = 0;
+  private shakeStrength = 0;
+
+  /** Secousse de la caméra (séisme). */
+  shake(strength: number): void {
+    this.shakeStrength = strength;
+    this.shakeLeft = 2.5;
+  }
+
   setLeftPan(enabled: boolean): void {
     this.controls.mouseButtons.LEFT = enabled ? THREE.MOUSE.PAN : null;
   }
@@ -141,5 +150,11 @@ export class CameraController {
     this.camera.position.add(c.target.clone().sub(before));
 
     c.update(dt);
+    if (this.shakeLeft > 0) {
+      this.shakeLeft -= dt;
+      const a = this.shakeStrength * Math.min(1, this.shakeLeft) * 0.35;
+      this.camera.position.x += (Math.random() - 0.5) * a;
+      this.camera.position.y += (Math.random() - 0.5) * a;
+    }
   }
 }

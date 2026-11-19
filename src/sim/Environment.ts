@@ -5,16 +5,16 @@ import { rng } from '../core/noise';
 export const enum Season { Spring = 0, Summer = 1, Autumn = 2, Winter = 3 }
 export const SEASON_NAMES = ['Printemps', 'Été', 'Automne', 'Hiver'];
 
-export type Weather = 'sun' | 'clouds' | 'rain' | 'storm' | 'snow' | 'fog' | 'heat' | 'frost';
+export type Weather = 'sun' | 'clouds' | 'rain' | 'storm' | 'snow' | 'fog' | 'heat' | 'frost' | 'wind';
 export const WEATHER_NAMES: Record<Weather, string> = {
-  sun: 'Ensoleillé', clouds: 'Nuageux', rain: 'Pluie', storm: 'Orage', snow: 'Neige', fog: 'Brouillard', heat: 'Canicule', frost: 'Gel',
+  sun: 'Ensoleillé', clouds: 'Nuageux', rain: 'Pluie', storm: 'Orage', snow: 'Neige', fog: 'Brouillard', heat: 'Canicule', frost: 'Gel', wind: 'Vent fort',
 };
 
 /** Probabilités de chaque météo selon la saison. */
 const WEATHER_TABLE: Record<Season, Array<[Weather, number]>> = {
-  [Season.Spring]: [['sun', 4], ['clouds', 3], ['rain', 3], ['storm', 1], ['fog', 1]],
+  [Season.Spring]: [['sun', 4], ['clouds', 3], ['rain', 3], ['storm', 1], ['fog', 1], ['wind', 2]],
   [Season.Summer]: [['sun', 6], ['clouds', 2], ['rain', 1], ['storm', 2], ['heat', 2]],
-  [Season.Autumn]: [['sun', 2], ['clouds', 4], ['rain', 4], ['storm', 1], ['fog', 3]],
+  [Season.Autumn]: [['sun', 2], ['clouds', 4], ['rain', 4], ['storm', 1], ['fog', 3], ['wind', 3]],
   [Season.Winter]: [['sun', 2], ['clouds', 3], ['snow', 4], ['fog', 2], ['frost', 3]],
 };
 const BASE_TEMP = [14, 25, 12, 1];
@@ -87,6 +87,11 @@ export class Environment {
     const rush = Math.exp(-((h - 8) ** 2) / 1.5) * 0.6 + Math.exp(-((h - 18) ** 2) / 2) * 0.55;
     const day = h > 6 && h < 22 ? 0.75 : 0.25;
     return Math.min(1.35, day + rush);
+  }
+
+  /** Production des éoliennes selon le vent. */
+  get windFactor(): number {
+    return this.weather === 'wind' ? 1.5 : this.weather === 'storm' ? 1.2 : this.weather === 'heat' || this.weather === 'fog' ? 0.6 : 1;
   }
 
   /** Vitesse des véhicules selon la météo. */

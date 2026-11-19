@@ -14,7 +14,17 @@ export interface GameConfig {
   /** Mois de départ (0 = janvier). */
   startMonth: number;
   weather: boolean;
+  /** Fréquence des catastrophes. */
+  disasters?: DisasterLevel;
 }
+
+export type DisasterLevel = 'off' | 'rare' | 'normal' | 'frequent';
+export const DISASTER_LEVELS: Record<DisasterLevel, { name: string; rate: number }> = {
+  off: { name: 'Aucune', rate: 0 },
+  rare: { name: 'Rares', rate: 0.5 },
+  normal: { name: 'Normales', rate: 1 },
+  frequent: { name: 'Fréquentes', rate: 2.5 },
+};
 
 export const DIFFICULTY: Record<Difficulty, { name: string; money: number; income: number }> = {
   easy: { name: 'Facile', money: 100_000, income: 1.15 },
@@ -24,5 +34,5 @@ export const DIFFICULTY: Record<Difficulty, { name: string; money: number; incom
 
 export const defaultConfig = (): GameConfig => ({
   cityName: 'Néoville', mayor: '', region: 'Val-Clair', mapType: 'river', seed: 1337,
-  difficulty: 'normal', mode: 'classic', startMonth: 3, weather: true,
+  difficulty: 'normal', mode: 'classic', startMonth: 3, weather: true, disasters: 'rare',
 });

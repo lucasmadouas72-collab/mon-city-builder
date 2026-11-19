@@ -499,7 +499,8 @@ export class Traffic {
           if (ahead < gap) gap = ahead;
         }
       }
-      let targetSpeed = v.maxSpeed * this.speedFactor * (ROAD_INFO[this.world.roadType[v.path[v.seg]] as RoadType]?.speed ?? 1);
+      const cur = v.path[v.seg];
+      let targetSpeed = v.maxSpeed * this.speedFactor * (ROAD_INFO[this.world.roadType[cur] as RoadType]?.speed ?? 1) * (1 - this.world.roadDamage[cur] * 0.006);
       const len = v.kind === VehicleKind.Bus || v.kind === VehicleKind.FireTruck ? 0.4 : v.kind === VehicleKind.Truck ? 0.34 : 0.26;
       if (v.dwell > 0) { v.dwell -= dt; targetSpeed = 0; }
       if (gap < Infinity) targetSpeed *= Math.max(0, Math.min(1, (gap - len) / SAFE_GAP));

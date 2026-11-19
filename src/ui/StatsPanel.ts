@@ -2,6 +2,7 @@ import { fmt } from '../input/ToolManager';
 import type { HistoryPoint, Simulation } from '../sim/Simulation';
 import { COHORTS, COHORT_AGES } from '../sim/Population';
 import { Coverage, COVERAGE_NAMES } from '../sim/services';
+import { DISASTER_NAMES } from '../sim/Disasters';
 
 interface ChartDef {
   key: string;
@@ -44,6 +45,8 @@ export class StatsPanel {
           <section><h3>Pyramide des âges</h3><div id="cohorts"></div></section>
           <section><h3>Services et société</h3><div id="society"></div></section>
         </div>
+        <h3>Catastrophes</h3>
+        <div id="disasters"></div>
         <h3>Évolution mensuelle</h3>
         <div class="charts" id="charts"></div>
       </div>`;
@@ -101,6 +104,9 @@ export class StatsPanel {
         <dt>Intervention police</dt><dd>${es.response.crime ? `${es.response.crime} min` : '–'} · ${es.resolved.crime} / ${es.failed.crime}</dd>
       </dl>`;
 
+    const dl = s.disasters.list.filter((d) => d.status === 'over').slice(-8).reverse();
+    this.q('#disasters').innerHTML = dl.length ? `<table class="ledger">${dl.map((d) => `<tr><td>${DISASTER_NAMES[d.type]} · ${this.dateLabel(Math.floor(d.day / 30))}</td>
+      <td>${d.destroyed} détruit(s) · ${d.casualties} victime(s) · ${Math.round(d.cost).toLocaleString('fr-FR')} €</td></tr>`).join('')}</table>` : '<p class="hint">Aucune catastrophe pour le moment.</p>';
     const hist = s.history;
     this.q('#charts').innerHTML = CHARTS.map((c) => this.chart(c, hist)).join('');
   }

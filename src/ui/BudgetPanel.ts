@@ -12,7 +12,7 @@ const INCOME_NAMES: Record<string, string> = {
   office: 'Impôts des bureaux',
   tickets: 'Billets de transport',
 };
-const EXPENSE_NAMES: Record<string, string> = { roads: 'Entretien des routes', loans: 'Remboursement des emprunts', ...BUDGET_NAMES };
+const EXPENSE_NAMES: Record<string, string> = { roads: 'Entretien des routes', loans: 'Remboursement des emprunts', reconstruction: 'Réparations et reconstruction', ...BUDGET_NAMES };
 
 /** Fenêtre Budget : impôts, budgets des services, emprunts, lignes de transport, bilan mensuel. */
 export class BudgetPanel {

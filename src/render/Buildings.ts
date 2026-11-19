@@ -29,6 +29,7 @@ export class Buildings {
   private tmp = new THREE.Matrix4();
   private q = new THREE.Quaternion();
   private up = new THREE.Vector3(0, 1, 0);
+  private tint = new THREE.Color();
 
   constructor(private world: World) {
     this.models = createModels();
@@ -46,11 +47,13 @@ export class Buildings {
     const state = w.bState[idx];
     if (state === BuildState.Construction) return `c-${w.bLevel[idx]}`;
     if (state === BuildState.Built) return `${w.zones[idx]}-${w.bLevel[idx]}-${w.bVariant[idx]}`;
+    if (w.rubble[idx]) return 'rubble';
     return null;
   }
 
   private geometry(key: string): THREE.BufferGeometry {
     if (key.startsWith('c-')) return this.models.construction[Number(key.slice(2))];
+    if (key === 'rubble') return this.models.rubble;
     return this.models.buildings.get(key)!;
   }
 
@@ -96,10 +99,14 @@ export class Buildings {
       const mesh = this.meshFor(key, list.length);
       list.forEach((idx, id) => {
         mesh.setMatrixAt(id, this.matrixFor(idx, this.pending.has(idx) ? 0.01 : 1));
+        // Bâtiments endommagés : teinte assombrie, roussie
+        const dmg = this.world.bDamage[idx] / 100;
+        mesh.setColorAt(id, this.tint.setRGB(1 - dmg * 0.55, 1 - dmg * 0.65, 1 - dmg * 0.7));
         this.slots.set(idx, { mesh, id });
       });
       mesh.count = list.length;
       mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
     for (const idx of this.pending) if (this.slots.has(idx)) this.anims.push({ idx, start: time });
     this.pending.clear();

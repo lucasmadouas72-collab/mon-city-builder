@@ -8,6 +8,7 @@ import { Traffic } from './Traffic';
 import { Utilities } from './Utilities';
 import { Environment } from './Environment';
 import { Emergency } from './Emergency';
+import { Disasters } from './Disasters';
 import { Demographics } from './Population';
 import { DIFFICULTY, defaultConfig, type GameConfig } from '../game/config';
 import { Transit, type TransitKind } from './Transit';
@@ -99,6 +100,11 @@ export class Simulation {
   readonly transit: Transit;
   readonly env = new Environment();
   readonly emergency: Emergency;
+  readonly disasters: Disasters;
+  /** Coût des réparations du mois en cours (facturé en fin de mois). */
+  private repairAccum = 0;
+  /** Coût des réparations du mois précédent. */
+  repairLastMonth = 0;
   /** Délinquance moyenne des bâtiments (0 à 1). */
   crimeIndex = 0;
   readonly demo = new Demographics();
@@ -120,7 +126,17 @@ export class Simulation {
     this.transit = new Transit(world, this.traffic);
     this.emergency = new Emergency(world, this.traffic);
     this.emergency.budget = (svc) => this.budgets[SERVICE_INFO[svc as Exclude<Service, Service.None>].budget] / 100;
+    this.disasters = new Disasters(this);
     this.emergency.onFireReached = (tile) => {
+      const w = this.world;
+      if (w.forestFire[tile]) {
+        // Feu de forêt : les pompiers éteignent les arbres autour
+        const n = w.size, i0 = tile % n, j0 = Math.floor(tile / n);
+        for (let j = j0 - 2; j <= j0 + 2; j++) for (let i = i0 - 2; i <= i0 + 2; i++) if (w.inBounds(i, j)) w.forestFire[w.index(i, j)] = 0;
+        this.events.emit('firesChanged', undefined);
+        this.events.emit('notify', { text: 'Feu de forêt circonscrit par les pompiers', kind: 'info', tile });
+        return;
+      }
       if (!this.utilities.fire[tile]) return;
       this.utilities.fire[tile] = 0;
       this.events.emit('firesChanged', undefined);
@@ -168,6 +184,7 @@ export class Simulation {
     this.incomeMul = DIFFICULTY[c.difficulty].income;
     this.env.startMonth = c.startMonth;
     this.env.weatherEnabled = c.weather;
+    this.disasters.level = c.disasters ?? 'rare';
     this.recomputeStats();
     this.events.emit('moneyChanged', this.money);
   }
@@ -187,6 +204,7 @@ export class Simulation {
     if (this.roadCount > 0 && linked === 0) w.deriveLinks();
     this.zonedDirty = true;
     this.popAtMonthStart = this.stats.population;
+    this.accumulateSoil();
   }
 
   // ---------- Économie ----------
@@ -240,6 +258,7 @@ export class Simulation {
     const sub = Math.ceil(scaled / 0.05);
     this.env.advance(scaled);
     this.emergency.update(scaled);
+    this.disasters.update(scaled);
     this.traffic.speedFactor = this.env.trafficSpeed;
     const target = Math.round(this.traffic.targetVehicles(this.stats.population, this.stats.totalJobs) * (1 - this.traffic.transitShare) * this.env.trafficVolume);
     for (let k = 0; k < sub; k++) this.traffic.update(scaled / sub, target);
@@ -268,6 +287,8 @@ export class Simulation {
     const changed: number[] = [];
     if (this.env.onNewDay(this.monthIndex)) this.events.emit('weatherChanged', undefined);
     this.emergency.daily(this.dayCount);
+    this.disasters.daily();
+    this.repairDaily();
     this.generateIncidents();
     if (this.dayCount % 10 === 0) this.computeCrime();
 
@@ -327,6 +348,7 @@ export class Simulation {
         const state = w.bState[idx];
 
         if (state === BuildState.Empty) {
+          if (w.rubble[idx] || w.flooded[idx]) continue;
           if (access && demand > 0 && this.isUnlocked(zone) && this.rand() < 0.08 + demand * 0.35) {
             if (this.utilities.canGrow(idx)) {
               this.startConstruction(idx, 1);
@@ -364,6 +386,81 @@ export class Simulation {
     } else if (this.dayCount % 5 === 0) {
       this.recomputeStats();
     }
+  }
+
+  // ---------- Catastrophes : dégâts et reconstruction ----------
+
+  /** Inflige des dégâts à un bâtiment ; renvoie true s'il est détruit (il laisse des gravats). */
+  damageBuilding(k: number, amount: number): boolean {
+    const w = this.world;
+    if (w.bState[k] !== BuildState.Built) return false;
+    w.bDamage[k] = Math.min(100, w.bDamage[k] + amount);
+    if (w.bDamage[k] >= 100) {
+      this.clearBuilding(k);
+      w.rubble[k] = 1;
+      return true;
+    }
+    return false;
+  }
+
+  /** Met le feu à un bâtiment (accident, feu de forêt). */
+  igniteBuilding(k: number): void {
+    if (this.utilities.fire[k] || this.world.bState[k] !== BuildState.Built) return;
+    this.utilities.fire[k] = 20;
+    this.emergency.report('fire', k, this.dayCount);
+    this.events.emit('firesChanged', undefined);
+  }
+
+  /** Pollution des sols : s'accumule autour de l'industrie et des centres de tri, se résorbe lentement. */
+  private accumulateSoil(): void {
+    const w = this.world, n = w.size;
+    for (let k = 0; k < w.soilPol.length; k++) w.soilPol[k] *= 0.985;
+    const add = (k: number, amount: number, r: number) => {
+      const i0 = k % n, j0 = Math.floor(k / n);
+      for (let j = j0 - r; j <= j0 + r; j++) for (let i = i0 - r; i <= i0 + r; i++) {
+        if (!w.inBounds(i, j)) continue;
+        const d = Math.hypot(i - i0, j - j0);
+        if (d <= r) { const q = w.index(i, j); w.soilPol[q] = Math.min(1, w.soilPol[q] + amount * (1 - d / (r + 1))); }
+      }
+    };
+    for (let k = 0; k < w.tiles.length; k++) {
+      if (w.bState[k] === BuildState.Built && w.zones[k] === Zone.Industrial) add(k, 0.008 * w.bLevel[k], 2);
+      if (w.service[k] === Service.Landfill) add(k, 0.015, 3);
+      if (w.service[k] === Service.PowerPlant) add(k, 0.006, 3);
+    }
+  }
+
+  /** Après des dégâts : statistiques et affichage à jour. */
+  afterDisasterHit(): void {
+    this.recomputeStats();
+    this.events.emit('buildingsChanged', { tiles: [] });
+    this.events.emit('damageChanged', undefined);
+    this.events.emit('floodChanged', undefined);
+  }
+
+  /** Réparations quotidiennes (payées en fin de mois) et déblaiement des gravats. */
+  private repairDaily(): void {
+    const w = this.world;
+    let changed = false;
+    const rate = this.budgets.fire / 100;
+    for (let k = 0; k < w.bDamage.length; k++) {
+      if (w.bDamage[k] && !w.flooded[k]) {
+        const r = Math.min(w.bDamage[k], Math.round(3 * rate) || 1);
+        w.bDamage[k] -= r;
+        this.repairAccum += r * 4 * Math.max(1, w.bLevel[k]);
+        changed = true;
+      }
+      if (w.roadDamage[k] && !w.flooded[k]) {
+        const r = Math.min(w.roadDamage[k], 5);
+        w.roadDamage[k] -= r;
+        this.repairAccum += r * 2;
+        changed = true;
+      }
+      if (w.rubble[k]) {
+        if (++w.rubble[k] > 15) { w.rubble[k] = 0; this.repairAccum += 60; changed = true; }
+      }
+    }
+    if (changed && this.dayCount % 3 === 0) this.events.emit('damageChanged', undefined);
   }
 
   /** Urgences médicales et délits du jour (selon les malades et la délinquance). */
@@ -457,7 +554,7 @@ export class Simulation {
     if (cov & Coverage.Fire) v += 0.03;
     if (cov & Coverage.Park) v += 0.09;
     v -= this.utilities.nuisance[idx];
-    v -= this.utilities.air[idx] * 0.4 + this.utilities.noise[idx] * 0.2;
+    v -= this.utilities.air[idx] * 0.4 + this.utilities.noise[idx] * 0.2 + this.world.soilPol[idx] * 0.3;
     return clamp(v, 0, 1);
   }
 
@@ -478,7 +575,8 @@ export class Simulation {
   capacity(idx: number): number {
     const w = this.world;
     if (w.bState[idx] !== BuildState.Built) return 0;
-    return ZONE_INFO[w.zones[idx] as ZoneType].capacity[w.bLevel[idx] - 1];
+    const base = ZONE_INFO[w.zones[idx] as ZoneType].capacity[w.bLevel[idx] - 1];
+    return w.bDamage[idx] ? Math.round(base * (1 - w.bDamage[idx] / 100)) : base;
   }
 
   recomputeStats(): void {
@@ -495,6 +593,9 @@ export class Simulation {
     }
     this.utilities.happinessOffset = -(this.taxes[Zone.Residential] - DEFAULT_TAX) * 0.012 + this.env.happiness;
     this.utilities.consumptionMul = this.env.consumption(this.monthIndex);
+    this.utilities.happinessOffset -= this.disasters.malus;
+    this.utilities.offline = this.disasters.offline;
+    this.utilities.windFactor = this.env.windFactor;
     this.utilities.studentShare = this.demo.shares[1] + this.demo.shares[2] + this.demo.shares[3] * 0.25;
     this.utilities.sickShare = this.demo.sick;
     this.utilities.compute();
@@ -542,6 +643,7 @@ export class Simulation {
     for (let k = 0; k < w.busStop.length; k++) stops += w.busStop[k];
     expensesBy.transport += (this.transit.busCount * BUS_UPKEEP + stops * 10 + this.transit.metroLines * METRO_LINE_UPKEEP) * (this.budgets.transport / 100);
     expensesBy.loans = this.loans.reduce((sum, l) => sum + l.payment, 0);
+    expensesBy.reconstruction = this.repairAccum;
     for (const k in incomeBy) incomeBy[k] = Math.round(incomeBy[k] * (k === 'tickets' ? 1 : this.incomeMul));
     for (const k in expensesBy) expensesBy[k] = Math.round(expensesBy[k]);
     const income = Object.values(incomeBy).reduce((a, b) => a + b, 0);
@@ -571,6 +673,7 @@ export class Simulation {
     const us = this.utilities.stats;
     this.demo.monthly(this.stats.population, this.popAtMonthStart, us.happiness, us.coverage[Coverage.Health] ?? 0, us.coverage[Coverage.Education] ?? 0, us.air);
     this.popAtMonthStart = this.stats.population;
+    this.accumulateSoil();
     for (const l of this.loans) l.remaining--;
     const done = this.loans.filter((l) => l.remaining <= 0).length;
     if (done) this.events.emit('notify', { text: 'Emprunt entièrement remboursé', kind: 'info' });
@@ -585,6 +688,8 @@ export class Simulation {
     if (this.money < 0) this.events.emit('notify', { text: 'Le budget municipal est dans le rouge : augmentez les impôts ou réduisez les dépenses', kind: 'error' });
     if (this.stats.unemployment > 0.15 && this.stats.population > 200) this.events.emit('notify', { text: `Le chômage atteint ${Math.round(this.stats.unemployment * 100)} % : zonez des commerces, industries ou bureaux`, kind: 'warn' });
     const net = this.stats.income - this.stats.expenses;
+    this.repairLastMonth = this.repairAccum;
+    this.repairAccum = 0;
     if (net !== 0 && !this.sandbox) {
       this.money += net;
       this.events.emit('moneyChanged', this.money);

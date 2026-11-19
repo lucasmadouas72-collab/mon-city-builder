@@ -52,6 +52,7 @@ Puis ouvrir l'adresse affichée (http://localhost:5173).
 - [x] Phase 6 : jour/nuit, saisons, météo, pollution, démographie, statistiques, journal, sauvegardes, nouvelle partie, annuler, terrain
 - [x] Étape 7 : routes droites à tous les angles, diagonales et courbes, rues / avenues / autoroutes / voies piétonnes, ponts, terrassement automatique, sens uniques, feux tricolores, remplacement de routes, règle « ne pas bloquer le carrefour », caméra (centrer, vue de dessus, retour, positions mémorisées)
 - [x] Étape 8 : capacités des écoles et cliniques (élèves affectés par âge, distance et places ; temps d'attente), couverture des services calculée par la route avec les embouteillages, pompiers / ambulances / police en véhicules pris dans le trafic, délinquance et délits, conseiller (gravité, causes probables, actions, « Voir sur la carte »), légendes des cartes de données, indicateurs cliquables
+- [x] Étape 9 : catastrophes (inondations, feux de forêt, tempêtes et tornades, séismes, accidents industriels, pannes électriques), fréquence réglable ou désactivable, digues et centre d'alerte, évacuation, bâtiments endommagés, gravats, réparations facturées, aide régionale, pollution de l'eau (eau contaminée), des sols et lumineuse, vent, cartes Dégâts et Risques
 
 ### Prochaines étapes (cahier des charges)
 
@@ -61,7 +62,6 @@ Puis ouvrir l'adresse affichée (http://localhost:5173).
 - [ ] Tramway, trains, ports, aéroports, taxis, vélos
 - [ ] Industries spécialisées et chaînes de production, import/export
 - [ ] Tourisme, loisirs, équipements sportifs, événements
-- [ ] Catastrophes (séismes, inondations, tornades) et prévention
 - [ ] Capacités réelles des écoles et hôpitaux, véhicules de service bloqués par le trafic
 - [ ] Sons et musique, mode photo, caméra au niveau de la rue
 - [ ] Éditeurs (cartes, bâtiments) et contenus communautaires

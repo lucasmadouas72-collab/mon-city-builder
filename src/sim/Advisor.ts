@@ -2,6 +2,7 @@ import type { Simulation } from './Simulation';
 import { BuildState, Zone } from './zones';
 import { Coverage, SERVICE_INFO, Service, Utility, UTILITY_NAMES } from './services';
 import { BUDGET_NAMES } from './economy';
+import { DISASTER_NAMES } from './Disasters';
 
 /**
  * Diagnostic : chaque problème est accompagné de ses causes probables, des actions possibles,
@@ -206,6 +207,62 @@ export function diagnose(sim: Simulation): Issue[] {
       causes: factors.slice(0, 3).filter(([v]) => v > 0.15).map(([, l]) => `Principal facteur : ${l}.`),
       actions: ['Traiter les problèmes listés ci-dessus en priorité.', 'Ajouter parcs et services dans les quartiers les moins satisfaits.'], view: 'happiness',
     });
+  }
+
+  // ----- Catastrophes, risques et pollutions -----
+  for (const d of sim.disasters.active) {
+    out.push({
+      id: `disaster-${d.id}`, severity: 'critical', title: `${DISASTER_NAMES[d.type]} ${d.status === 'warning' ? `annoncé(e) dans ${d.countdown} jour(s)` : 'en cours'}`,
+      causes: [d.status === 'warning' ? 'Le centre d’alerte a détecté le phénomène à l’avance.' : `${d.damaged} bâtiment(s) touché(s) pour l’instant.`],
+      actions: d.type === 'forestFire' ? ['Les pompiers interviennent ; construire une caserne près des forêts.'] : d.type === 'blackout' ? ['Construire une seconde source d’électricité pour ne pas dépendre d’une seule centrale.'] : ['Laisser les secours intervenir, puis suivre la reconstruction (carte « Dégâts »).'],
+      tile: d.tile, view: d.type === 'flood' || d.type === 'earthquake' || d.type === 'tornado' ? 'damage' : undefined,
+    });
+  }
+  const damaged = built.filter((k) => w.bDamage[k] > 0).length;
+  let rubble = 0;
+  for (let k = 0; k < w.rubble.length; k++) if (w.rubble[k]) rubble++;
+  if (damaged || rubble) {
+    out.push({
+      id: 'repairs', severity: damaged + rubble > 20 ? 'serious' : 'warning', title: `Reconstruction : ${damaged} bâtiment(s) endommagé(s), ${rubble} parcelle(s) en gravats`,
+      causes: ['Conséquences d’une catastrophe ou d’un incendie.', 'Les bâtiments endommagés accueillent moins d’habitants et d’emplois.'],
+      actions: [`Augmenter le budget « ${BUDGET_NAMES.fire} » pour réparer plus vite.`, 'Les gravats sont déblayés automatiquement, puis la parcelle se reconstruit.'],
+      tile: built.find((k) => w.bDamage[k] > 0), view: 'damage',
+    });
+  }
+  const contaminated = built.filter((k) => ut.contaminated[k]).length;
+  if (contaminated) {
+    out.push({
+      id: 'water-contamination', severity: 'serious', title: `Eau contaminée dans ${contaminated} bâtiment(s)`,
+      causes: ['Une station de pompage puise dans une eau polluée par les égouts non traités ou l’industrie.'],
+      actions: ['Construire une station d’épuration.', 'Déplacer la station de pompage en amont, loin de l’industrie et des rejets.'],
+      tile: built.find((k) => ut.contaminated[k]), view: 'waterPol',
+    });
+  }
+  if (sim.disasters.level !== 'off') {
+    const levees = sim.disasters.levees();
+    const exposed = built.filter((k) => w.zones[k] === Zone.Residential && sim.disasters.floodRisk(k, levees) === 1);
+    if (exposed.length > 8) {
+      out.push({
+        id: 'flood-risk', severity: 'warning', title: `${exposed.length} logements en zone inondable`,
+        causes: ['Ces bâtiments sont sur des terrains bas, près de l’eau, sans digue.'],
+        actions: ['Construire une digue au bord de l’eau (menu Services).', 'Éviter de zoner les berges basses.'], tile: exposed[0], view: 'risk',
+      });
+    }
+    if (st.population > 1500 && !hasService(Service.WarningCenter)) {
+      out.push({
+        id: 'warning-center', severity: 'warning', title: 'Aucun centre d’alerte',
+        causes: ['Sans alerte, les catastrophes frappent sans prévenir : pas d’évacuation possible.'],
+        actions: ['Construire un centre d’alerte (menu Services).'],
+      });
+    }
+    const plants = w.service.filter((s) => s === Service.PowerPlant).length + w.service.filter((s) => s === Service.WindTurbine).length;
+    if (st.population > 500 && plants === 1) {
+      out.push({
+        id: 'blackout-risk', severity: 'warning', title: 'Une seule source d’électricité',
+        causes: ['Si elle tombe en panne, toute la ville est privée de courant.'],
+        actions: ['Construire une seconde centrale ou des éoliennes.'], view: 'power',
+      });
+    }
   }
 
   if (!out.length) out.push({ id: 'ok', severity: 'good', title: 'Tout fonctionne bien', causes: ['Aucun problème important détecté.'], actions: ['Continuez à développer la ville.'] });

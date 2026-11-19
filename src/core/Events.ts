@@ -25,6 +25,10 @@ export interface GameEvents extends Record<string, unknown> {
   transitChanged: void;
   weatherChanged: void;
   terrainChanged: void;
+  disaster: { id: number; phase: 'warning' | 'start' | 'end' };
+  damageChanged: void;
+  floodChanged: void;
+  shake: { strength: number };
   milestone: { index: number };
   buildingsChanged: { tiles: number[] };
   statsChanged: import('../sim/Simulation').CityStats;

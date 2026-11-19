@@ -1,5 +1,6 @@
 import { GAME_NAME } from '../config';
-import { DIFFICULTY, defaultConfig, type Difficulty, type GameConfig, type GameMode } from '../game/config';
+import { DIFFICULTY, DISASTER_LEVELS, defaultConfig, type Difficulty, type DisasterLevel, type GameConfig, type GameMode } from '../game/config';
+import { DISASTER_NAMES, DISASTER_TYPES } from '../sim/Disasters';
 import { deleteSave, listSaves, type SaveMeta } from '../game/storage';
 import { MAP_TYPES, type MapType } from '../sim/World';
 
@@ -54,7 +55,10 @@ function newGameForm(): string {
         <label>Mode de jeu<select id="ng-mode"><option value="classic">Classique</option><option value="sandbox">Bac à sable (argent illimité, tout débloqué)</option></select></label>
         <label>Saison de départ<select id="ng-season">${SEASONS.map(([m, n]) => `<option value="${m}" ${m === 2 ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
       </div>
-      <label class="check"><input type="checkbox" id="ng-weather" checked> Météo variable (pluie, neige, orages, canicules)</label>
+      <div class="fields three">
+        <label>Catastrophes<select id="ng-disasters">${(Object.keys(DISASTER_LEVELS) as DisasterLevel[]).map((d) => `<option value="${d}" ${d === 'rare' ? 'selected' : ''}>${DISASTER_LEVELS[d].name}</option>`).join('')}</select></label>
+      </div>
+      <label class="check"><input type="checkbox" id="ng-weather" checked> Météo variable (pluie, neige, orages, canicules, vent)</label>
       <div class="actions"><button type="button" class="ghost" data-back>Retour</button><button class="primary" type="submit">Fonder la ville</button></div>
     </form>`;
 }
@@ -71,6 +75,7 @@ function readForm(root: HTMLElement): GameConfig {
     mode: v('ng-mode') as GameMode,
     startMonth: Number(v('ng-season')),
     weather: (root.querySelector('#ng-weather') as HTMLInputElement).checked,
+    disasters: v('ng-disasters') as DisasterLevel,
   };
 }
 
@@ -133,6 +138,10 @@ export async function showMainMenu(root: HTMLElement, a: MenuActions): Promise<v
 }
 
 export interface GameMenuActions {
+  /** Réglage de la fréquence des catastrophes et déclenchement manuel. */
+  disasterLevel: () => DisasterLevel;
+  setDisasterLevel: (l: DisasterLevel) => void;
+  triggerDisaster: (type: string) => void;
   save: (name: string) => Promise<void>;
   load: (slot: string) => void;
   newGame: (c: GameConfig) => void;
@@ -165,6 +174,8 @@ export class GameMenu {
         bindForm(this.wrap, (c) => a.newGame(c));
       }
       if (act === 'export') a.exportFile();
+      const trig = t.closest<HTMLElement>('[data-trigger]');
+      if (trig) { a.triggerDisaster(trig.dataset.trigger!); this.toggle(false); return; }
       if (act === 'quit') a.quit();
       const load = t.closest<HTMLElement>('[data-load]');
       if (load) a.load(load.dataset.load!);
@@ -195,7 +206,13 @@ export class GameMenu {
           <label class="ghost big file">Importer une ville<input type="file" accept=".json,application/json" id="gm-import" hidden></label>
           <button class="ghost big" data-act="quit">Menu principal</button>
         </div>
+        <h3>Règles de partie</h3>
+        <div class="save-line"><label class="inline">Catastrophes
+          <select id="gm-disasters">${(Object.keys(DISASTER_LEVELS) as DisasterLevel[]).map((d) => `<option value="${d}" ${d === this.a.disasterLevel() ? 'selected' : ''}>${DISASTER_LEVELS[d].name}</option>`).join('')}</select></label></div>
+        <h3>Déclencher une catastrophe</h3>
+        <div class="trigger-grid">${DISASTER_TYPES.map((t) => `<button class="ghost" data-trigger="${t}">${DISASTER_NAMES[t]}</button>`).join('')}</div>
       </div>`;
+    this.wrap.querySelector('#gm-disasters')?.addEventListener('change', (e) => this.a.setDisasterLevel((e.target as HTMLSelectElement).value as DisasterLevel));
     this.wrap.querySelector('#gm-import')?.addEventListener('change', (e) => readFile(e.target as HTMLInputElement, this.a.importData));
   }
 

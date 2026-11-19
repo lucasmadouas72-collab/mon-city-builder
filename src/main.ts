@@ -9,6 +9,8 @@ import { ServiceLayer } from './render/ServiceLayer';
 import { TransitView } from './render/TransitView';
 import { Atmosphere } from './render/Atmosphere';
 import { TrafficLights } from './render/TrafficLights';
+import { DisasterView } from './render/DisasterView';
+import { DisasterPanel } from './ui/DisasterPanel';
 import { Simulation } from './sim/Simulation';
 import { World } from './sim/World';
 import { UndoStack } from './sim/Undo';
@@ -53,12 +55,19 @@ function startGame(config: GameConfig, file?: SaveFile): void {
   const transitView = new TransitView(world, sim.transit);
   const atmosphere = new Atmosphere(view, world);
   const lights = new TrafficLights(world, sim.traffic);
+  const disasterView = new DisasterView(sim);
+  view.scene.add(disasterView.group);
+  disasterView.refreshFlood();
+  sim.events.on('shake', ({ strength }) => cam.shake(strength));
+  sim.events.on('damageChanged', () => view.buildings.markChanged([]));
   view.scene.add(trafficView.group, dataView.overlay.group, services.group, transitView.group, atmosphere.group, lights.group);
   tools.onDraft = (kind, tiles) => transitView.setDraft(kind, tiles);
 
   const hud = new Hud(document.getElementById('hud')!, sim, tools, dataView);
   hud.focus = (x, z) => cam.focus(x, z);
   hud.bindUndo(undo);
+  const disasterPanel = new DisasterPanel(document.getElementById('hud')!, sim);
+  disasterPanel.focus = (t) => cam.focus((t % world.size) + 0.5, Math.floor(t / world.size) + 0.5);
   // Caméra : F = centrer sur la case survolée, V = vue de dessus, Retour arrière = vue précédente,
   // Alt + 1 à 4 = mémoriser une position, Maj + 1 à 4 = la rappeler
   window.addEventListener('keydown', (e) => {
@@ -91,6 +100,9 @@ function startGame(config: GameConfig, file?: SaveFile): void {
     importData: (data) => {
       try { parseSave(data); restartWith({ type: 'data', data }); } catch (e) { sim.events.emit('notify', { text: (e as Error).message, kind: 'error' }); }
     },
+    disasterLevel: () => sim.disasters.level,
+    setDisasterLevel: (l) => { sim.disasters.level = l; config.disasters = l; sim.events.emit('notify', { text: `Catastrophes : ${l === 'off' ? 'désactivées' : 'fréquence modifiée'}`, kind: 'info' }); },
+    triggerDisaster: (type) => { sim.disasters.start(type as never); },
     exportFile: () => {
       const data = serialize(sim, config, cameraState());
       const name = `${config.cityName.replace(/[^\p{L}\p{N}_-]+/gu, '_')}.neoville.json`;
@@ -150,6 +162,7 @@ function startGame(config: GameConfig, file?: SaveFile): void {
     lights.update();
     dataView.update(now / 1000);
     services.update(now / 1000);
+    disasterView.update(now / 1000);
     transitView.visible = dataView.mode === 'transport' || tools.tool === 'busline' || tools.tool === 'metroline' || tools.tool === 'busstop';
     atmosphere.update(sim.env, sim.monthIndex, Math.min(dt, 0.1), now / 1000);
     view.trees.setSeason(sim.env.season(sim.monthIndex));

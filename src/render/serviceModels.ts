@@ -142,6 +142,23 @@ function metroStation(): THREE.BufferGeometry {
   return b.build();
 }
 
+function levee(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#8fbf5a');
+  b.add(new THREE.BoxGeometry(0.96, 0.3, 0.4).translate(0, 0.15, 0.1), '#9a9387');
+  b.box(0.96, 0.04, 0.42, 0, 0.3, 0.1, '#7c8794');
+  b.add(new THREE.BoxGeometry(0.96, 0.2, 0.3).rotateX(-0.5).translate(0, 0.12, 0.38), '#7fa35a');
+  return b.build();
+}
+
+function warningCenter(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#c9c4b8');
+  b.tower(0.5, 0.42, 2, -0.12, 0.03, 0.05, '#e5e7eb', '#7fa6c4');
+  b.box(0.06, 0.8, 0.06, 0.3, 0.03, -0.25, '#9ca3af'); // mât
+  b.add(new THREE.SphereGeometry(0.12, 12, 8), '#f8fafc', 0.3, 0.9, -0.25); // radar
+  b.add(new THREE.ConeGeometry(0.07, 0.12, 8).rotateX(Math.PI), '#ef4444', -0.12, 0.38, 0.05); // sirène
+  return b.build();
+}
+
 export function createServiceModels(): Map<Service, THREE.BufferGeometry> {
   return new Map<Service, THREE.BufferGeometry>([
     [Service.PowerPlant, powerPlant()],
@@ -155,5 +172,7 @@ export function createServiceModels(): Map<Service, THREE.BufferGeometry> {
     [Service.FireStation, fireStation()],
     [Service.Park, park()],
     [Service.MetroStation, metroStation()],
+    [Service.Levee, levee()],
+    [Service.WarningCenter, warningCenter()],
   ]);
 }
