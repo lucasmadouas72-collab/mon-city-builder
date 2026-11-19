@@ -26,6 +26,9 @@ const ICONS: Record<string, string> = {
   services: '<path d="M3 21h18M5 21V10l7-5 7 5v11"/><path d="M10 21v-5h4v5"/>',
   stats: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   bell: '<path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
+  undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
+  redo: '<path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>',
+  terrain: '<path d="M2 20l6-9 4 5 3-4 7 8z"/><circle cx="17" cy="6" r="2"/>',
   layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5" opacity=".6"/>',
   pause: '<path d="M8 5v14M16 5v14"/>',
   play1: '<path d="M8 5l11 7-11 7z"/>',
@@ -66,6 +69,13 @@ const GROUPS: Group[] = [
   { id: 'utilities', label: 'Réseaux', icon: 'utilities', tools: svcTools('utilities') },
   { id: 'services', label: 'Services', icon: 'services', tools: svcTools('services') },
   { id: 'transport', label: 'Transports', icon: 'transport', tools: TRANSPORT_TOOLS },
+  { id: 'terrain', label: 'Terrain', icon: 'terrain', tools: [
+    { id: 'tUp', label: 'Élever', color: '#a3e635', sub: '3 € par point de relief', desc: 'Cliquez-glissez pour monter le sol.' },
+    { id: 'tDown', label: 'Abaisser', color: '#38bdf8', sub: '3 € · sous 0 m, crée de l\'eau', desc: 'Cliquez-glissez pour creuser. Sous le niveau de la mer, l\'eau apparaît.' },
+    { id: 'tSmooth', label: 'Lisser', color: '#fbbf24', sub: '3 € par point de relief', desc: 'Adoucit les pentes.' },
+    { id: 'tFlat', label: 'Aplanir', color: '#f472b6', sub: '3 € par point de relief', desc: 'Aligne le sol sur la hauteur du point de départ.' },
+    { id: 'tTrees', label: 'Planter des arbres', color: '#22c55e', sub: '6 € par arbre', desc: 'Plante des arbres sur les cases libres.' },
+  ] },
   { id: 'bulldoze', label: 'Démolir', icon: 'bulldoze', key: '8', tools: [{ id: 'bulldoze', label: 'Démolir' }] },
 ];
 
@@ -83,11 +93,30 @@ export class Hud {
   private unread = 0;
   /** Centre la caméra sur une case (fourni par le jeu). */
   focus?: (x: number, z: number) => void;
+  onMenu?: () => void;
+
+  /** Relie les boutons Annuler / Rétablir à la pile d'annulation. */
+  bindUndo(undo: import('../sim/Undo').UndoStack): void {
+    const refresh = () => {
+      (this.el('#undo-btn') as HTMLButtonElement).disabled = !undo.canUndo;
+      (this.el('#redo-btn') as HTMLButtonElement).disabled = !undo.canRedo;
+    };
+    undo.onChange = refresh;
+    this.el('#undo-btn').addEventListener('click', () => undo.undoLast());
+    this.el('#redo-btn').addEventListener('click', () => undo.redoLast());
+    window.addEventListener('keydown', (e) => {
+      if (!(e.ctrlKey || e.metaKey) || (e.target as HTMLElement).tagName === 'INPUT') return;
+      if (e.code === 'KeyZ' && !e.shiftKey) { e.preventDefault(); undo.undoLast(); }
+      if (e.code === 'KeyY' || (e.code === 'KeyZ' && e.shiftKey)) { e.preventDefault(); undo.redoLast(); }
+    });
+    refresh();
+  }
 
   constructor(private root: HTMLElement, private sim: Simulation, private tools: ToolManager, views: DataView) {
     root.innerHTML = `
       <header class="topbar panel">
-        <div class="brand"><span class="logo"></span>${GAME_NAME}</div>
+        <button class="brand" id="menu-btn" title="Menu : sauvegarder, charger, nouvelle partie (F10)"><span class="logo"></span><span class="city-name">${GAME_NAME}</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg></button>
+        <div class="undo"><button class="icon-btn" id="undo-btn" title="Annuler (Ctrl+Z)" disabled>${icon('undo')}</button><button class="icon-btn" id="redo-btn" title="Rétablir (Ctrl+Y)" disabled>${icon('redo')}</button></div>
         <button class="stat stat-btn" id="budget-btn" title="Ouvrir le budget (B)"><span class="label">Budget</span><span class="value" id="money"></span></button>
         <div class="stat"><span class="label">Solde / mois</span><span class="value" id="balance"></span></div>
         <div class="stat"><span class="label">Population</span><span class="value" id="pop">0</span></div>
@@ -158,6 +187,8 @@ export class Hud {
       if (b?.dataset.view) { views.set(b.dataset.view as ViewMode); this.el('#views-menu').hidden = true; }
     });
     views.onChange = (m) => this.updateViews(m);
+    this.el('.city-name').textContent = sim.config.cityName;
+    this.el('#menu-btn').addEventListener('click', () => this.onMenu?.());
     this.budget = new BudgetPanel(root, sim);
     this.stats = new StatsPanel(root, sim);
     this.el('#stats-btn').addEventListener('click', () => this.stats.toggle());

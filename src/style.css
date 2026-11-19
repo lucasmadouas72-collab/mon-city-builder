@@ -101,7 +101,7 @@ kbd {
 
 @media (max-width: 900px) {
   .topbar { gap: 12px; }
-  .stat:nth-of-type(n+3), .demand, .date, .help { display: none; }
+  .help { display: none; }
   .info { display: none; }
 }
 
@@ -222,8 +222,8 @@ button.primary { margin-top: 14px; padding: 9px 18px; border-radius: 10px; backg
 .ms-modal h2 { font-size: 28px; margin: 6px 0 10px; }
 .ms-modal p { color: var(--muted); line-height: 1.6; margin: 0; }
 .ms-modal p b { color: var(--text); }
-@media (max-width: 1250px) { .milestone { display: none; } }
-@media (max-width: 1400px) { .topbar .stat:nth-of-type(4) { display: none; } .date { font-size: 13px; } }
+
+
 
 /* ---- Phase 6 : horloge et météo ---- */
 .clock { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.25; }
@@ -285,3 +285,60 @@ button.primary { margin-top: 14px; padding: 9px 18px; border-radius: 10px; backg
 .chart-tip b { display: block; font-size: 12px; }
 .chart-tip span { color: var(--muted); }
 .chart-empty { height: 70px; display: grid; place-items: center; font-size: 12px; color: var(--muted); text-align: center; }
+
+/* ---- Phase 6 : menus, sauvegardes ---- */
+button.brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 17px; padding: 6px 8px; margin-left: -8px; border-radius: 10px; }
+button.brand:hover { background: rgba(255,255,255,0.07); }
+button.brand svg { width: 14px; height: 14px; color: var(--muted); }
+.undo { display: flex; gap: 4px; }
+.icon-btn:disabled { opacity: 0.35; cursor: default; }
+.main-menu { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; overflow: auto;
+  background: radial-gradient(circle at 30% 20%, #1d4d47 0%, #122028 55%, #0b141a 100%); }
+.menu-card { width: min(440px, 100%); padding: 28px; }
+.menu-card.wide, .menu-modal.wide { width: min(860px, 100%); }
+.menu-brand { display: flex; align-items: center; gap: 14px; }
+.menu-brand h1 { margin: 0; font-size: 34px; letter-spacing: -0.5px; }
+.logo.big { width: 44px; height: 44px; border-radius: 12px; }
+.tagline { color: var(--muted); margin: 8px 0 22px; }
+.menu-buttons { display: flex; flex-direction: column; gap: 8px; }
+.menu-buttons .primary { margin: 0; padding: 12px; font-size: 15px; }
+button.ghost.big, label.ghost.big { padding: 11px 14px; font-size: 14px; text-align: center; border-radius: 10px; border: 1px solid var(--line); font-weight: 600; cursor: pointer; }
+label.ghost.big:hover, button.ghost.big:hover:not(:disabled) { background: rgba(255,255,255,0.06); }
+button.ghost.big:disabled { opacity: 0.4; cursor: default; }
+.newgame h3 { margin-top: 18px; }
+.fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+.fields.three { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 700px) { .fields, .fields.three { grid-template-columns: 1fr; } }
+.fields label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); }
+.fields input, .fields select, .save-line input { font: inherit; font-size: 14px; color: var(--text); background: rgba(255,255,255,0.06); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.fields select option { background: var(--bg-solid); }
+.seed { display: flex; gap: 6px; }
+.seed input { flex: 1; min-width: 0; }
+.maps { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.map { position: relative; display: flex; flex-direction: column; gap: 2px; padding: 10px; border-radius: 10px; border: 1px solid var(--line); cursor: pointer; font-size: 13px; }
+.map input { position: absolute; opacity: 0; }
+.map i { height: 34px; border-radius: 6px; margin-bottom: 6px; background: linear-gradient(135deg, var(--a) 55%, var(--b) 55%); }
+.map small { color: var(--muted); font-size: 11.5px; }
+.map.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-dim); }
+.check { display: flex; gap: 8px; align-items: center; font-size: 13px; margin-top: 14px; }
+.actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+.actions .primary { margin: 0; }
+.saves { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.save-row { display: flex; gap: 8px; align-items: stretch; }
+.save-load { flex: 1; text-align: left; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); }
+.save-load:hover { background: rgba(255,255,255,0.06); }
+.save-load em { font-style: normal; font-size: 11px; color: var(--accent); margin-left: 8px; }
+.save-load small { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
+.menu-modal { width: min(460px, 100%); }
+.menu-modal header { display: flex; justify-content: space-between; align-items: center; }
+.menu-modal .close { font-size: 24px; color: var(--muted); }
+.save-line { display: flex; gap: 8px; }
+.save-line input { flex: 1; min-width: 0; }
+.save-line .primary { margin: 0; }
+.ok-msg { color: var(--accent); font-weight: 600; margin: 10px 0 0; }
+
+@media (max-width: 1650px) { .milestone { display: none; } .topbar { gap: 14px; } }
+@media (max-width: 1500px) { .stat:has(#jobs), .stat:has(#flow) { display: none; } }
+@media (max-width: 1250px) { .stat:has(#happy), .undo { display: none; } }
+@media (max-width: 1050px) { .stat:has(#balance), .demand, .clock .weather { display: none; } }
+@media (max-width: 760px) { .stat:has(#pop), .views, #stats-btn { display: none; } }

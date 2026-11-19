@@ -6,8 +6,11 @@ import type { CameraController } from './CameraController';
 import { Zone, ZONE_INFO, type ZoneType } from '../sim/zones';
 import { SERVICE_INFO, Service as Svc, type Service } from '../sim/services';
 import { BUS_STOP_COST } from '../sim/economy';
+import type { UndoStack } from '../sim/Undo';
 
-export type ToolId = 'select' | 'road' | 'zoneR' | 'zoneC' | 'zoneI' | 'zoneO' | 'dezone' | 'bulldoze' | 'busstop' | 'busline' | 'metroline' | `svc${number}`;
+export type ToolId = 'select' | 'road' | 'zoneR' | 'zoneC' | 'zoneI' | 'zoneO' | 'dezone' | 'bulldoze' | 'busstop' | 'busline' | 'metroline' | 'tUp' | 'tDown' | 'tSmooth' | 'tFlat' | 'tTrees' | `svc${number}`;
+
+const TERRAIN_MODE = { tUp: 'up', tDown: 'down', tSmooth: 'smooth', tFlat: 'flat', tTrees: 'trees' } as const;
 
 /** Équipement placé par un outil `svcN`, ou null. */
 export const toolService = (t: ToolId): Service | null => (t.startsWith('svc') ? (Number(t.slice(3)) as Service) : null);
@@ -50,6 +53,20 @@ export class ToolManager {
   /** Aperçu de la ligne de transport en cours de tracé. */
   onDraft?: (kind: 'bus' | 'metro' | null, tiles: number[]) => void;
   private draft: number[] = [];
+  /** Pile d'annulation (fournie par le jeu). */
+  undo?: UndoStack;
+  /** Rayon du pinceau de terrain (en cases). */
+  brush = 3;
+  private stroke: { end: () => void; flat: number; last: number } | null = null;
+  private hitPoint = new THREE.Vector3();
+
+  private get terrainMode() {
+    return (TERRAIN_MODE as Record<string, 'up' | 'down' | 'smooth' | 'flat' | 'trees'>)[this.tool] ?? null;
+  }
+
+  private act<T>(fn: () => T): T {
+    return this.undo ? this.undo.record(fn) : fn();
+  }
 
   private raycaster = new THREE.Raycaster();
   private ndc = new THREE.Vector2();
@@ -75,6 +92,8 @@ export class ToolManager {
         else this.setTool('select');
       }
       if (e.code === 'Enter' && this.draft.length >= 2) this.finishLine();
+      if (this.terrainMode && (e.code === 'BracketLeft' || e.code === 'Minus' || e.code === 'NumpadSubtract')) { this.brush = Math.max(1, this.brush - 1); this.refresh(); }
+      if (this.terrainMode && (e.code === 'BracketRight' || e.code === 'Equal' || e.code === 'NumpadAdd')) { this.brush = Math.min(8, this.brush + 1); this.refresh(); }
     });
     sim.events.on('roadsChanged', () => this.refresh());
     sim.events.on('moneyChanged', () => this.refresh());
@@ -94,7 +113,7 @@ export class ToolManager {
 
   private finishLine(): void {
     const kind = this.lineKind;
-    if (kind && this.draft.length >= 2) this.sim.createLine(kind, this.draft);
+    if (kind && this.draft.length >= 2) { const stops = [...this.draft]; this.act(() => this.sim.createLine(kind, stops)); }
     this.draft = [];
     this.refresh();
   }
@@ -130,6 +149,7 @@ export class ToolManager {
     this.raycaster.setFromCamera(this.ndc, this.view.camera);
     const hit = this.raycaster.intersectObject(this.view.terrain, false)[0];
     if (!hit) return null;
+    this.hitPoint.copy(hit.point);
     const w = this.sim.world;
     const i = Math.floor(hit.point.x), j = Math.floor(hit.point.z);
     return w.inBounds(i, j) ? { i, j } : null;
@@ -149,30 +169,58 @@ export class ToolManager {
     if (e.buttons & 6) return; // rotation / déplacement caméra en cours
     this.setHover(this.pick(e));
     this.updateTooltipPosition();
+    if (this.stroke) this.paint(performance.now());
+  }
+
+  private paint(now: number): void {
+    const mode = this.terrainMode;
+    if (!mode || !this.stroke || now - this.stroke.last < 60) return;
+    this.stroke.last = now;
+    this.sim.terraform(this.hitPoint.x, this.hitPoint.z, mode, this.brush, this.stroke.flat);
   }
 
   private onDown(e: PointerEvent): void {
     if (e.button !== 0 || this.tool === 'select') return;
     const h = this.pick(e);
     if (!h) return;
+    if (this.terrainMode) {
+      this.stroke = {
+        end: this.undo ? this.undo.begin() : () => {},
+        flat: this.sim.world.heightAt(this.hitPoint.x, this.hitPoint.z),
+        last: 0,
+      };
+      this.paint(performance.now());
+      this.holdTimer = window.setInterval(() => this.paint(performance.now()), 70);
+      return;
+    }
     this.dragStart = h;
     this.refresh();
   }
 
+  private holdTimer = 0;
+
   private onUp(e: PointerEvent): void {
+    if (e.button === 0 && this.stroke) {
+      clearInterval(this.holdTimer);
+      this.stroke.end();
+      this.stroke = null;
+      return;
+    }
     if (e.button !== 0 || !this.dragStart) return;
     const tiles = this.currentSelection();
     this.dragStart = null;
     if (tiles && this.lineKind) {
       this.lineClick(tiles[0]);
     } else if (tiles && this.tool === 'busstop') {
-      this.sim.placeBusStop(tiles[0]);
+      this.act(() => this.sim.placeBusStop(tiles[0]));
     } else if (tiles) {
       const zone = TOOL_ZONE[this.tool];
-      if (this.tool === 'road') this.sim.buildRoads(tiles);
-      else if (this.tool === 'bulldoze') this.sim.bulldoze(tiles);
-      else if (zone !== undefined) this.sim.applyZone(tiles, zone);
-      else if (toolService(this.tool)) this.sim.placeService(tiles[0], toolService(this.tool)!);
+      this.act(() => {
+        if (this.tool === 'road') this.sim.buildRoads(tiles);
+        else if (this.tool === 'bulldoze') this.sim.bulldoze(tiles);
+        else if (zone !== undefined) this.sim.applyZone(tiles, zone);
+        else if (toolService(this.tool)) this.sim.placeService(tiles[0], toolService(this.tool)!);
+      });
     }
     this.refresh();
   }
@@ -234,6 +282,17 @@ export class ToolManager {
         const net = est.refund - est.cost;
         this.tip = { text: net >= 0 ? `Démolir · +${fmt(net)}` : `Défricher · ${fmt(-net)}`, kind: 'info' };
       }
+    } else if (this.terrainMode) {
+      const w = this.sim.world;
+      const end = tiles[tiles.length - 1];
+      const ci = end % w.size, cj = Math.floor(end / w.size);
+      const area: number[] = [];
+      for (let b = cj - this.brush; b <= cj + this.brush; b++) for (let a = ci - this.brush; a <= ci + this.brush; a++) {
+        if (w.inBounds(a, b) && Math.hypot(a - ci, b - cj) <= this.brush) area.push(w.index(a, b));
+      }
+      ov.set([[area, this.terrainMode === 'trees' ? OverlayColor.valid : OverlayColor.hover]]);
+      const labels = { up: 'Élever', down: 'Abaisser', smooth: 'Lisser', flat: 'Aplanir', trees: 'Planter des arbres' };
+      this.tip = { text: `${labels[this.terrainMode]} · rayon ${this.brush} (touches - et +)`, kind: 'info' };
     } else if (this.tool === 'busstop') {
       const w = this.sim.world;
       const idx = tiles[0];

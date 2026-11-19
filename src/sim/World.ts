@@ -3,6 +3,21 @@ import { fbm, rng } from '../core/noise';
 import { MAX_BUILD_SLOPE, ZONE_DEPTH } from './zones';
 import { SERVICE_INFO, type Service } from './services';
 
+export type MapType = 'river' | 'plain' | 'mountain' | 'valley' | 'coast' | 'island' | 'archipelago' | 'forest' | 'desert' | 'hills';
+
+export const MAP_TYPES: Array<[MapType, string, string]> = [
+  ['river', 'Fleuve', 'Collines, une rivière et un lac'],
+  ['plain', 'Plaine', 'Terrain plat et facile à aménager'],
+  ['hills', 'Région vallonnée', 'Reliefs doux partout'],
+  ['valley', 'Vallée', 'Une rivière entre deux massifs'],
+  ['mountain', 'Montagne', 'Sommets escarpés, peu de place'],
+  ['coast', 'Littoral', 'Une côte et la mer au sud'],
+  ['island', 'Île', 'Une île entourée par la mer'],
+  ['archipelago', 'Archipel', 'Plusieurs îles à relier'],
+  ['forest', 'Forêt', 'Grandes forêts à défricher'],
+  ['desert', 'Désert', 'Terrain sec avec une oasis'],
+];
+
 export const enum Tile {
   Empty = 0,
   Road = 1,
@@ -38,8 +53,11 @@ export class World {
   /** Arrêt de bus sur une case de route. */
   readonly busStop: Uint8Array;
 
-  constructor(seed = 1337) {
+  readonly mapType: MapType;
+
+  constructor(seed = 1337, mapType: MapType = 'river', generate = true) {
     this.seed = seed;
+    this.mapType = mapType;
     const n = this.size;
     this.heights = new Float32Array((n + 1) * (n + 1));
     this.tiles = new Uint8Array(n * n);
@@ -52,7 +70,7 @@ export class World {
     this.roadDist = new Uint8Array(n * n).fill(255);
     this.service = new Uint8Array(n * n);
     this.busStop = new Uint8Array(n * n);
-    this.generate();
+    if (generate) this.generate();
   }
 
   /** Recalcule la distance aux routes (parcours en largeur sur la terre ferme). */
@@ -107,42 +125,91 @@ export class World {
   private generate(): void {
     const n = this.size;
     const s = this.seed;
+    const type = this.mapType;
+    const smooth = (t: number) => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
+    /** Creuse un cours d'eau dont l'axe est donné par une fonction. */
+    const river = (h: number, d: number, width: number, bank = 7) => {
+      if (d >= width + bank) return h;
+      const k = smooth((d - width) / bank);
+      return -1.4 + (Math.max(h, 0.35) + 1.4) * k;
+    };
     for (let j = 0; j <= n; j++) {
       for (let i = 0; i <= n; i++) {
-        // Collines douces + quelques reliefs plus marqués
         const base = fbm(i / 48, j / 48, s);
         const hills = fbm(i / 18 + 50, j / 18 + 50, s + 7, 4);
-        let h = (base - 0.42) * 6 + 1.3 + Math.max(0, hills - 0.55) * 14;
-
-        // Rivière sinueuse qui traverse la carte
-        const rz = n * 0.58 + Math.sin(i / 17) * 9 + Math.sin(i / 6.3 + 1) * 2.5;
-        const d = Math.abs(j - rz);
-        const width = 2.6 + fbm(i / 20, 3, s + 3, 2) * 2;
-        if (d < width + 7) {
-          const t = Math.max(0, (d - width) / 7); // 0 dans le lit, 1 hors des berges
-          const bed = -1.4;
-          const k = t * t * (3 - 2 * t);
-          h = bed + (Math.max(h, 0.35) - bed) * k;
+        const ridge = fbm(i / 26 + 9, j / 26 + 3, s + 21, 5);
+        const cx = i / n - 0.5, cz = j / n - 0.5;
+        const r = Math.sqrt(cx * cx + cz * cz);
+        let h: number;
+        switch (type) {
+          case 'plain':
+            h = 1 + (base - 0.5) * 1.6;
+            h = river(h, Math.abs(j - (n * 0.7 + Math.sin(i / 23) * 6)), 1.8, 5);
+            break;
+          case 'mountain':
+            h = (base - 0.4) * 5 + 1.4 + Math.max(0, ridge - 0.45) * 26;
+            break;
+          case 'valley': {
+            const edge = Math.abs(cx) * 2; // 0 au centre, 1 sur les bords est/ouest
+            h = 0.9 + (base - 0.5) * 2 + smooth((edge - 0.35) / 0.6) * (9 + ridge * 8);
+            h = river(h, Math.abs(i - (n * 0.5 + Math.sin(j / 14) * 7)), 2.4, 6);
+            break;
+          }
+          case 'coast': {
+            const shore = n * 0.68 + Math.sin(i / 15) * 6 + (fbm(i / 10, 7, s + 5, 3) - 0.5) * 10;
+            h = (base - 0.42) * 5 + 1.6 + Math.max(0, hills - 0.6) * 10;
+            h = Math.min(h, (shore - j) * 0.35 + 0.4);
+            if (j > shore) h = Math.max(-2.5, h);
+            break;
+          }
+          case 'island': {
+            const coast = 0.36 + (fbm(i / 12, j / 12, s + 2, 4) - 0.5) * 0.14;
+            h = (base - 0.42) * 4 + 1.6 + Math.max(0, hills - 0.58) * 12;
+            h = Math.min(h, (coast - r) * 26 + 0.3);
+            h = Math.max(h, -2.5);
+            break;
+          }
+          case 'archipelago': {
+            const isl = fbm(i / 22 + 40, j / 22 + 40, s + 31, 4);
+            h = (isl - 0.5) * 16 + (base - 0.5) * 2;
+            h = Math.min(h, (0.47 - r) * 30);
+            h = Math.max(h, -2.5);
+            break;
+          }
+          case 'desert':
+            h = 1.1 + (base - 0.5) * 2.2 + Math.sin(i / 5 + base * 6) * 0.25 * hills;
+            break;
+          case 'hills':
+            h = (base - 0.4) * 6 + 1.4 + (hills - 0.5) * 4;
+            break;
+          case 'forest':
+          case 'river':
+          default:
+            h = (base - 0.42) * 6 + 1.3 + Math.max(0, hills - 0.55) * 14;
+            h = river(h, Math.abs(j - (n * 0.58 + Math.sin(i / 17) * 9 + Math.sin(i / 6.3 + 1) * 2.5)), 2.6 + fbm(i / 20, 3, s + 3, 2) * 2);
         }
-
-        // Lac au nord-ouest
-        const lx = i - n * 0.24, lz = j - n * 0.22;
-        const ld = Math.sqrt(lx * lx + lz * lz) / (11 + fbm(i / 9, j / 9, s + 9, 3) * 6);
-        if (ld < 1.6) h = Math.min(h, -1.6 + Math.max(0, ld - 0.6) * 2.6);
-
+        // Lacs
+        if (type === 'river' || type === 'forest' || type === 'mountain' || type === 'desert') {
+          const lx = i - n * (type === 'desert' ? 0.5 : 0.24), lz = j - n * (type === 'desert' ? 0.45 : 0.22);
+          const size = type === 'desert' ? 7 : 11;
+          const ld = Math.sqrt(lx * lx + lz * lz) / (size + fbm(i / 9, j / 9, s + 9, 3) * 6);
+          if (ld < 1.6) h = Math.min(h, -1.6 + Math.max(0, ld - 0.6) * 2.6);
+        }
         this.heights[j * (n + 1) + i] = h;
       }
     }
 
     // Forêts
     const rand = rng(s + 42);
+    const forest = type === 'forest' ? 0.42 : type === 'desert' ? 0.8 : type === 'plain' ? 0.62 : 0.56;
+    const sparseRate = type === 'desert' ? 0.002 : 0.015;
     for (let j = 0; j < n; j++) {
       for (let i = 0; i < n; i++) {
         if (this.isWater(i, j)) continue;
         const f = fbm(i / 14 + 200, j / 14 + 200, s + 13, 4);
-        const sparse = rand() < 0.015;
-        if (f > 0.56 || sparse) {
-          const density = f > 0.66 ? 3 : f > 0.6 ? 2 : 1;
+        const sparse = rand() < sparseRate;
+        if (f > forest || sparse) {
+          const density = f > forest + 0.1 ? 3 : f > forest + 0.04 ? 2 : 1;
           this.trees[j * n + i] = rand() < 0.85 ? density : 0;
         }
       }

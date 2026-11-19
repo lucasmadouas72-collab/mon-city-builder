@@ -20,7 +20,16 @@ const C = {
 
 const tmp = new THREE.Color();
 
+let desertBiome = false;
+const DESERT = { low: new THREE.Color('#e3c58c'), mid: new THREE.Color('#d6ad6c'), high: new THREE.Color('#b98a55') };
+
 function terrainColor(h: number, slope: number, jitter: number, out: THREE.Color): THREE.Color {
+  if (desertBiome && h > SEA_LEVEL + 0.15) {
+    out.copy(DESERT.low).lerp(DESERT.mid, Math.min(1, h / 2.5)).lerp(DESERT.high, Math.max(0, Math.min(1, (h - 2.5) / 3)));
+    if (slope > 0.7) out.lerp(C.rock, Math.min(1, (slope - 0.7) / 0.6));
+    out.offsetHSL(jitter * 0.01, 0, jitter * 0.03);
+    return out;
+  }
   if (h < SEA_LEVEL + 0.15) out.copy(C.sandWet);
   else if (h < 0.5) out.copy(C.sand).lerp(C.grassLow, Math.max(0, (h - 0.3) / 0.2));
   else if (h < 2) out.copy(C.grassLow).lerp(C.grass, (h - 0.5) / 1.5);
@@ -33,6 +42,7 @@ function terrainColor(h: number, slope: number, jitter: number, out: THREE.Color
 
 /** Maillage low-poly du relief (ombrage plat, couleurs par triangle) + socle façon maquette. */
 export function createTerrainMesh(world: World): THREE.Mesh {
+  desertBiome = world.mapType === 'desert';
   const n = world.size;
   const triCount = n * n * 2 + n * 4 * 2;
   const pos = new Float32Array(triCount * 9);

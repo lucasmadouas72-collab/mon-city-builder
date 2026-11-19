@@ -101,6 +101,18 @@ export class SceneRenderer {
     window.addEventListener('resize', () => this.resize(container));
   }
 
+  /** Reconstruit le relief et l'eau après une modification du terrain. */
+  rebuildTerrain(world: World): void {
+    const fresh = createTerrainMesh(world);
+    this.terrain.geometry.dispose();
+    this.terrain.geometry = fresh.geometry;
+    this.scene.remove(this.water.mesh);
+    this.water = createWater(world);
+    this.scene.add(this.water.mesh);
+    this.trees.rebuild();
+    this.refreshZones(world);
+  }
+
   /** Teinte les cases zonées encore vides. */
   refreshZones(world: World): void {
     const layers = new Map<number, number[]>();

@@ -8,6 +8,7 @@ import { Traffic } from './Traffic';
 import { Utilities } from './Utilities';
 import { Environment } from './Environment';
 import { Demographics } from './Population';
+import { DIFFICULTY, defaultConfig, type GameConfig } from '../game/config';
 import { Transit, type TransitKind } from './Transit';
 import {
   BUDGET_KEYS, BUS_STOP_COST, BUS_UNLOCK, BUS_UPKEEP, DEFAULT_TAX, LOAN_OFFERS, MAX_LOANS, MAX_TAX, METRO_LINE_UPKEEP,
@@ -92,6 +93,10 @@ export class Simulation {
   readonly transit: Transit;
   readonly env = new Environment();
   readonly demo = new Demographics();
+  config: GameConfig = defaultConfig();
+  /** Mode bac à sable : argent illimité, tout est débloqué. */
+  sandbox = false;
+  private incomeMul = 1;
   /** Historique mensuel pour les statistiques. */
   history: HistoryPoint[] = [];
   private popAtMonthStart = 0;
@@ -127,15 +132,37 @@ export class Simulation {
   }
 
   isUnlocked(zone: ZoneType): boolean {
-    return this.maxPop >= ZONE_INFO[zone].unlockPop;
+    return this.sandbox || this.maxPop >= ZONE_INFO[zone].unlockPop;
   }
 
   isServiceUnlocked(s: Service): boolean {
-    return this.maxPop >= SERVICE_INFO[s as Exclude<Service, Service.None>].unlockPop;
+    return this.sandbox || this.maxPop >= SERVICE_INFO[s as Exclude<Service, Service.None>].unlockPop;
   }
 
   get busUnlocked(): boolean {
-    return this.maxPop >= BUS_UNLOCK;
+    return this.sandbox || this.maxPop >= BUS_UNLOCK;
+  }
+
+  /** Applique les paramètres choisis à la création de la partie. */
+  applyConfig(c: GameConfig): void {
+    this.config = c;
+    this.sandbox = c.mode === 'sandbox';
+    this.money = this.sandbox ? Infinity : DIFFICULTY[c.difficulty].money;
+    this.incomeMul = DIFFICULTY[c.difficulty].income;
+    this.env.startMonth = c.startMonth;
+    this.env.weatherEnabled = c.weather;
+    this.recomputeStats();
+    this.events.emit('moneyChanged', this.money);
+  }
+
+  /** Recalcule les données dérivées après un chargement ou une annulation. */
+  afterLoad(): void {
+    const w = this.world;
+    w.computeRoadDist();
+    this.roadCount = 0;
+    for (let k = 0; k < w.tiles.length; k++) if (w.tiles[k] === Tile.Road) this.roadCount++;
+    this.zonedDirty = true;
+    this.popAtMonthStart = this.stats.population;
   }
 
   // ---------- Économie ----------
@@ -438,7 +465,7 @@ export class Simulation {
     for (let k = 0; k < w.busStop.length; k++) stops += w.busStop[k];
     expensesBy.transport += (this.transit.busCount * BUS_UPKEEP + stops * 10 + this.transit.metroLines * METRO_LINE_UPKEEP) * (this.budgets.transport / 100);
     expensesBy.loans = this.loans.reduce((sum, l) => sum + l.payment, 0);
-    for (const k in incomeBy) incomeBy[k] = Math.round(incomeBy[k]);
+    for (const k in incomeBy) incomeBy[k] = Math.round(incomeBy[k] * (k === 'tickets' ? 1 : this.incomeMul));
     for (const k in expensesBy) expensesBy[k] = Math.round(expensesBy[k]);
     const income = Object.values(incomeBy).reduce((a, b) => a + b, 0);
     const expenses = Object.values(expensesBy).reduce((a, b) => a + b, 0);
@@ -480,13 +507,14 @@ export class Simulation {
     if (this.money < 0) this.events.emit('notify', { text: 'Le budget municipal est dans le rouge : augmentez les impôts ou réduisez les dépenses', kind: 'error' });
     if (this.stats.unemployment > 0.15 && this.stats.population > 200) this.events.emit('notify', { text: `Le chômage atteint ${Math.round(this.stats.unemployment * 100)} % : zonez des commerces, industries ou bureaux`, kind: 'warn' });
     const net = this.stats.income - this.stats.expenses;
-    if (net !== 0) {
+    if (net !== 0 && !this.sandbox) {
       this.money += net;
       this.events.emit('moneyChanged', this.money);
     }
   }
 
   private spend(amount: number): void {
+    if (this.sandbox) return;
     this.money -= amount;
     this.events.emit('moneyChanged', this.money);
   }
@@ -674,6 +702,87 @@ export class Simulation {
     this.transit.removeLine(id);
     this.recomputeStats();
     this.events.emit('transitChanged', undefined);
+  }
+
+  // ---------- Terrain ----------
+
+  /** Un coin du relief peut-il être modifié (aucune route ni construction autour) ? */
+  private cornerLocked(ci: number, cj: number): boolean {
+    const w = this.world;
+    for (const [i, j] of [[ci - 1, cj - 1], [ci, cj - 1], [ci - 1, cj], [ci, cj]]) {
+      if (!w.inBounds(i, j)) continue;
+      const k = w.index(i, j);
+      if (w.tiles[k] === Tile.Road || w.service[k] || w.bState[k] !== BuildState.Empty) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Modifie le relief autour d'un point : élever, abaisser, lisser, aplanir, ou planter des arbres.
+   * Renvoie true si quelque chose a changé.
+   */
+  terraform(x: number, z: number, mode: 'up' | 'down' | 'smooth' | 'flat' | 'trees', radius: number, flatTarget = 0): boolean {
+    const w = this.world, n = w.size;
+    const cost = mode === 'trees' ? 6 : 3;
+    let changed = 0;
+    if (mode === 'trees') {
+      for (let j = Math.floor(z - radius); j <= Math.ceil(z + radius); j++) {
+        for (let i = Math.floor(x - radius); i <= Math.ceil(x + radius); i++) {
+          if (!w.inBounds(i, j) || Math.hypot(i + 0.5 - x, j + 0.5 - z) > radius) continue;
+          const k = w.index(i, j);
+          if (w.tiles[k] || w.service[k] || w.bState[k] || w.isWater(i, j) || w.trees[k] >= 3) continue;
+          if (this.money < cost) break;
+          w.trees[k] = Math.min(3, w.trees[k] + 1);
+          this.spend(cost);
+          changed++;
+        }
+      }
+      if (changed) { this.recomputeStats(); this.events.emit('treesChanged', undefined); }
+      return changed > 0;
+    }
+    const H = (i: number, j: number) => w.heights[j * (n + 1) + i];
+    const next = new Map<number, number>();
+    for (let cj = Math.max(0, Math.floor(z - radius)); cj <= Math.min(n, Math.ceil(z + radius)); cj++) {
+      for (let ci = Math.max(0, Math.floor(x - radius)); ci <= Math.min(n, Math.ceil(x + radius)); ci++) {
+        const d = Math.hypot(ci - x, cj - z);
+        if (d > radius || this.cornerLocked(ci, cj)) continue;
+        const f = 1 - d / (radius + 0.5);
+        const h = H(ci, cj);
+        let v = h;
+        if (mode === 'up') v = h + 0.12 * f;
+        else if (mode === 'down') v = h - 0.12 * f;
+        else if (mode === 'flat') v = h + (flatTarget - h) * 0.35 * f;
+        else {
+          let sum = 0, cnt = 0;
+          for (const [a, b] of [[ci + 1, cj], [ci - 1, cj], [ci, cj + 1], [ci, cj - 1]]) if (a >= 0 && b >= 0 && a <= n && b <= n) { sum += H(a, b); cnt++; }
+          v = h + (sum / cnt - h) * 0.4 * f;
+        }
+        v = Math.max(-3, Math.min(14, v));
+        if (Math.abs(v - h) > 1e-4) next.set(cj * (n + 1) + ci, v);
+      }
+    }
+    if (!next.size) return false;
+    if (!this.sandbox && this.money < next.size * cost) {
+      this.events.emit('notify', { text: 'Fonds insuffisants', kind: 'error' });
+      return false;
+    }
+    for (const [k, v] of next) w.heights[k] = v;
+    this.spend(next.size * cost);
+    // Les cases devenues aquatiques perdent arbres et zones
+    let trees = false, zones = false;
+    for (let j = Math.max(0, Math.floor(z - radius) - 1); j < Math.min(n, Math.ceil(z + radius) + 1); j++) {
+      for (let i = Math.max(0, Math.floor(x - radius) - 1); i < Math.min(n, Math.ceil(x + radius) + 1); i++) {
+        if (!w.isWater(i, j)) continue;
+        const k = w.index(i, j);
+        if (w.trees[k]) { w.trees[k] = 0; trees = true; }
+        if (w.zones[k]) { w.zones[k] = Zone.None; zones = true; this.zonedDirty = true; }
+      }
+    }
+    w.computeRoadDist();
+    this.events.emit('terrainChanged', undefined);
+    if (trees) this.events.emit('treesChanged', undefined);
+    if (zones) this.events.emit('zonesChanged', undefined);
+    return true;
   }
 
   // ---------- Démolition ----------
