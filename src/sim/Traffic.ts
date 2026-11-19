@@ -17,6 +17,7 @@ export const enum VehicleKind {
   FireTruck = 4,
   Police = 5,
   Garbage = 6,
+  Tram = 7,
 }
 
 /** Véhicules d'urgence : prioritaires aux feux, mais pris dans les bouchons. */
@@ -57,6 +58,8 @@ export interface Vehicle {
   stops: Set<number> | null;
   /** Intervention : identifiant d'incident (> 0), retour à la base (< 0), ou 0. */
   mission: number;
+  /** Voie occupée (0 = la plus à droite). */
+  lane: number;
 }
 
 interface WeightedList {
@@ -118,7 +121,10 @@ export class Traffic {
   flow = 1;
   /** Part des trajets faits en transport en commun (moyenne glissante). */
   transitShare = 0;
-  transitHook?: (a: number, b: number) => boolean;
+  transitHook?: (a: number, b: number) => 'transit' | 'bike' | 'taxi' | null;
+  /** Vitesse moyenne relative (0 à 1) et volume de passages par case (moyennes glissantes). */
+  readonly speedAvg: Float32Array;
+  readonly volume: Float32Array;
   /** Facteur de vitesse (météo). */
   speedFactor = 1;
 
@@ -144,6 +150,8 @@ export class Traffic {
   constructor(private world: World) {
     const n = world.size * world.size;
     this.density = new Float32Array(n);
+    this.speedAvg = new Float32Array(n).fill(1);
+    this.volume = new Float32Array(n);
     this.gScore = new Float32Array(n);
     this.cameFrom = new Int32Array(n);
     this.visitStamp = new Uint32Array(n);
@@ -239,8 +247,9 @@ export class Traffic {
         // Sens uniques : on ne remonte pas une voie à contresens
         if ((w.oneway[k] && w.oneway[k] !== d + 1) || (w.oneway[cur] && w.oneway[cur] !== d + 1)) continue;
         // Coût = temps de parcours (les voies rapides attirent le trafic)
-        const speed = ROAD_INFO[w.roadType[k] as RoadType]?.speed ?? 1;
-        const cost = gc + (d % 2 ? 1.414 : 1) / speed + (ignoreTraffic ? 0 : Math.min(this.density[k], 6) * 0.6);
+        const speed = (ROAD_INFO[w.roadType[k] as RoadType]?.speed ?? 1) * (w.roadFlags[k] & 8 ? 0.65 : 1);
+        const cap = Math.max(1, w.lanesAt(k)) * (w.roadFlags[k] & 4 ? 0.6 : 1);
+        const cost = gc + (d % 2 ? 1.414 : 1) / speed + (ignoreTraffic ? 0 : Math.min(this.density[k], 6) * 0.6 / cap + (w.incident[k] ? 3 : 0));
         if (seen[k] === stamp && cost >= g[k]) continue;
         seen[k] = stamp;
         g[k] = cost;
@@ -276,10 +285,12 @@ export class Traffic {
     if (a < 0 || b < 0) return false;
     // Depuis ou vers une voie piétonne : le trajet se fait à pied
     if (!this.world.carsAllowed(a) || !this.world.carsAllowed(b)) { this.tripsCompleted++; return false; }
+    let taxi = false;
     if (kind === VehicleKind.Car && this.transitHook) {
-      const byTransit = this.transitHook(a, b);
-      this.transitShare += ((byTransit ? 1 : 0) - this.transitShare) * 0.01;
-      if (byTransit) { this.tripsCompleted++; return false; }
+      const mode = this.transitHook(a, b);
+      this.transitShare += ((mode === 'transit' ? 1 : 0) - this.transitShare) * 0.01;
+      if (mode === 'transit' || mode === 'bike') { this.tripsCompleted++; return false; }
+      taxi = mode === 'taxi';
     }
     const path = this.findPath(a, b);
     if (!path || path.length < 2) {
@@ -288,12 +299,13 @@ export class Traffic {
     }
     const v: Vehicle = {
       id: this.nextId++, kind,
-      color: kind === VehicleKind.Truck ? TRUCK_COLORS[Math.floor(this.rand() * TRUCK_COLORS.length)] : CAR_COLORS[Math.floor(this.rand() * CAR_COLORS.length)],
+      color: taxi ? 0xfacc15 : kind === VehicleKind.Truck ? TRUCK_COLORS[Math.floor(this.rand() * TRUCK_COLORS.length)] : CAR_COLORS[Math.floor(this.rand() * CAR_COLORS.length)],
       path, seg: 0, t: 0, speed: 0,
       maxSpeed: (kind === VehicleKind.Truck ? TRUCK_SPEED : CAR_SPEED) * (0.9 + this.rand() * 0.2),
       x: 0, z: 0, hx: 1, hz: 0, c: [0, 0, 0, 0, 0, 0], len: 1, wait: 0, holding: -1, age: 0,
-      line: 0, loop: false, dwell: 0, stops: null, mission: 0,
+      line: 0, loop: false, dwell: 0, stops: null, mission: 0, lane: 0,
     };
+    this.assignLane(v);
     this.setupSegment(v);
     this.place(v);
     this.vehicles.push(v);
@@ -316,13 +328,14 @@ export class Traffic {
 
   // ---------- Bus ----------
 
-  addLoopVehicle(line: number, path: number[], start: number, stops: Set<number>, color: string): void {
+  addLoopVehicle(line: number, path: number[], start: number, stops: Set<number>, color: string, kind = VehicleKind.Bus): void {
     const v: Vehicle = {
-      id: this.nextId++, kind: VehicleKind.Bus, color: parseInt(color.slice(1), 16),
-      path, seg: start % path.length, t: 0, speed: 0, maxSpeed: 1.5,
+      id: this.nextId++, kind, color: parseInt(color.slice(1), 16),
+      path, seg: start % path.length, t: 0, speed: 0, maxSpeed: kind === VehicleKind.Tram ? 1.4 : 1.5,
       x: 0, z: 0, hx: 1, hz: 0, c: [0, 0, 0, 0, 0, 0], len: 1, wait: 0, holding: -1, age: 0,
-      line, loop: true, dwell: 0, stops, mission: 0,
+      line, loop: true, dwell: 0, stops, mission: 0, lane: 0,
     };
+    this.assignLane(v);
     this.setupSegment(v);
     this.place(v);
     this.vehicles.push(v);
@@ -336,8 +349,9 @@ export class Traffic {
       id: this.nextId++, kind, color: kind === VehicleKind.FireTruck ? 0xd92b2b : kind === VehicleKind.Police ? 0x1e3a8a : kind === VehicleKind.Garbage ? 0x3f8f3a : 0xf8fafc,
       path, seg: 0, t: 0, speed: 0, maxSpeed: kind === VehicleKind.Garbage ? 1.8 : 2.2,
       x: 0, z: 0, hx: 1, hz: 0, c: [0, 0, 0, 0, 0, 0], len: 1, wait: 0, holding: -1, age: 0,
-      line: 0, loop: false, dwell: 0, stops: null, mission,
+      line: 0, loop: false, dwell: 0, stops: null, mission, lane: 0,
     };
+    this.assignLane(v);
     this.setupSegment(v);
     this.place(v);
     this.vehicles.push(v);
@@ -355,6 +369,15 @@ export class Traffic {
   private nextTile(v: Vehicle): number {
     if (v.seg + 1 < v.path.length) return v.path[v.seg + 1];
     return v.loop ? v.path[0] : -1;
+  }
+
+  /** Voie occupée sur la case courante : plusieurs voies par sens, voie de bus réservée. */
+  private assignLane(v: Vehicle): void {
+    const w = this.world, cur = v.path[v.seg];
+    const lanes = w.lanesAt(cur);
+    const busLane = (w.roadFlags[cur] & 4) !== 0 && lanes >= 2;
+    if (busLane) v.lane = v.kind === VehicleKind.Bus || v.kind === VehicleKind.Tram || isEmergency(v.kind) ? lanes - 1 : v.id % (lanes - 1);
+    else v.lane = lanes > 1 ? v.id % lanes : 0;
   }
 
   // ---------- Géométrie des trajectoires ----------
@@ -383,16 +406,19 @@ export class Traffic {
     else { const [qx, qz] = center(next); nIn = right(qx - cx, qz - cz); ex = cx; ez = cz; }
     if (next >= 0) { const [qx, qz] = center(next); nOut = right(qx - cx, qz - cz); ox = (qx + cx) / 2; oz = (qz + cz) / 2; }
     else { nOut = nIn; ox = cx; oz = cz; }
-    ex += nIn[0] * LANE; ez += nIn[1] * LANE;
-    ox += nOut[0] * LANE; oz += nOut[1] * LANE;
+    // Décalage latéral : voie la plus à droite pour la voie 0 sur une rue, voies réparties sur les grands axes
+    const lanes = this.world.lanesAt(cur);
+    const off = lanes <= 1 ? LANE : 0.08 + (Math.min(v.lane, lanes - 1) / Math.max(1, lanes - 1)) * (lanes >= 3 ? 0.24 : 0.18);
+    ex += nIn[0] * off; ez += nIn[1] * off;
+    ox += nOut[0] * off; oz += nOut[1] * off;
     // Point de contrôle : centre de la case décalé selon la bissectrice des deux normales
     let mx = nIn[0] + nOut[0], mz = nIn[1] + nOut[1];
     const ml = Math.hypot(mx, mz);
     if (ml < 0.2) { mx = (ex + ox) / 2; mz = (ez + oz) / 2; } // demi-tour
     else {
       const cosHalf = Math.max(0.5, ml / 2);
-      mx = cx + (mx / ml) * (LANE / cosHalf);
-      mz = cz + (mz / ml) * (LANE / cosHalf);
+      mx = cx + (mx / ml) * (off / cosHalf);
+      mz = cz + (mz / ml) * (off / cosHalf);
     }
     v.c = [ex, ez, mx, mz, ox, oz];
     const chord = Math.hypot(ox - ex, oz - ez);
@@ -508,6 +534,7 @@ export class Traffic {
         if (!list) continue;
         for (const o of list) {
           if (o === v) continue;
+          if (o.lane !== v.lane) continue; // autre voie du même sens
           const dx = o.x - v.x, dz = o.z - v.z;
           const ahead = dx * v.hx + dz * v.hz;
           if (ahead <= 0) continue;
@@ -521,8 +548,12 @@ export class Traffic {
         }
       }
       const cur = v.path[v.seg];
-      let targetSpeed = v.maxSpeed * this.speedFactor * (ROAD_INFO[this.world.roadType[cur] as RoadType]?.speed ?? 1) * (1 - Math.max(this.world.roadDamage[cur], 60 - this.world.condition[cur]) * 0.006);
-      const len = v.kind === VehicleKind.Bus || v.kind === VehicleKind.FireTruck ? 0.4 : v.kind === VehicleKind.Truck || v.kind === VehicleKind.Garbage ? 0.34 : 0.26;
+      const wf = this.world.roadFlags[cur];
+      const inc = this.world.incident[cur] ? (this.world.incidentKind[cur] === 1 ? 0.2 : 0.45) : 1;
+      const transitVeh = v.kind === VehicleKind.Bus || v.kind === VehicleKind.Tram;
+      let targetSpeed = v.maxSpeed * this.speedFactor * (ROAD_INFO[this.world.roadType[cur] as RoadType]?.speed ?? 1) * (1 - Math.max(this.world.roadDamage[cur], 60 - this.world.condition[cur]) * 0.006)
+        * (wf & 8 ? 0.65 : 1) * (wf & 4 && !transitVeh ? 0.85 : 1) * inc;
+      const len = v.kind === VehicleKind.Tram ? 0.66 : v.kind === VehicleKind.Bus || v.kind === VehicleKind.FireTruck ? 0.4 : v.kind === VehicleKind.Truck || v.kind === VehicleKind.Garbage ? 0.34 : 0.26;
       if (v.dwell > 0) { v.dwell -= dt; targetSpeed = 0; }
       if (gap < Infinity) targetSpeed *= Math.max(0, Math.min(1, (gap - len) / SAFE_GAP));
 
@@ -565,6 +596,8 @@ export class Traffic {
         v.t = 0;
         v.wait = 0;
         const tile = v.path[v.seg];
+        this.volume[tile] += 1;
+        this.assignLane(v);
         if (v.holding >= 0 && v.holding !== tile) this.release(v);
         if (this.isJunction(tile)) {
           const d = this.dir(prevTile, tile);
@@ -583,6 +616,8 @@ export class Traffic {
       }
       this.place(v);
       speedSum += v.speed / v.maxSpeed;
+      const ct = v.path[v.seg];
+      this.speedAvg[ct] += (v.speed / v.maxSpeed - this.speedAvg[ct]) * Math.min(1, dt * 0.5);
       survivors.push(v);
     }
     this.vehicles = survivors;
@@ -593,6 +628,7 @@ export class Traffic {
     for (let idx = 0; idx < this.density.length; idx++) {
       if (this.density[idx] > 0.001) this.density[idx] *= 1 - k;
       else this.density[idx] = 0;
+      if (this.speedAvg[idx] < 1 && !this.buckets.has(idx)) this.speedAvg[idx] += (1 - this.speedAvg[idx]) * k * 0.3;
     }
     for (const [tile, list] of this.buckets) this.density[tile] += list.length * k;
   }

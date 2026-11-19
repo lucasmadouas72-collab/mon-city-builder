@@ -280,6 +280,111 @@ function landfillSite(): THREE.BufferGeometry {
   return b.build();
 }
 
+function depot(color: string, roof: string, rails = false): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#8f939a');
+  b.box(0.8, 0.26, 0.5, 0, 0.03, -0.18, '#d1d5db');
+  b.add(new THREE.CylinderGeometry(0.25, 0.25, 0.8, 12, 1, false, 0, Math.PI).rotateZ(Math.PI / 2).scale(1, 0.35, 1), roof, 0, 0.29, -0.18);
+  for (let k = 0; k < 3; k++) b.box(0.18, 0.2, 0.01, -0.26 + k * 0.26, 0.03, 0.075, '#4b5563');
+  if (rails) for (let k = 0; k < 3; k++) for (const o of [-0.04, 0.04]) b.box(0.012, 0.01, 0.4, -0.26 + k * 0.26 + o, 0.03, 0.27, '#9ca3af');
+  else for (let k = 0; k < 3; k++) b.box(0.12, 0.09, 0.28, -0.26 + k * 0.26, 0.03, 0.28, color);
+  return b.build();
+}
+
+function trainStation(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#b9b4aa');
+  b.box(0.7, 0.26, 0.34, 0, 0.03, -0.2, '#e8dcc4'); // bâtiment voyageurs
+  b.gable(0.74, 0.14, 0.38, 0, 0.29, -0.2, '#7c4a3a');
+  b.box(0.12, 0.3, 0.12, 0.28, 0.29, -0.2, '#e8dcc4'); // horloge
+  b.cyl(0.04, 0.01, 0.28, 0.5, -0.135, '#f8fafc', 12);
+  b.box(0.9, 0.05, 0.18, 0, 0.03, 0.2, '#a8a29e'); // quai
+  b.box(0.9, 0.02, 0.16, 0, 0.22, 0.2, '#9ca3af'); // marquise
+  for (let k = 0; k < 4; k++) b.box(0.02, 0.17, 0.02, -0.4 + k * 0.27, 0.05, 0.2, '#6b7280');
+  return b.build();
+}
+
+function ferryPier(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#c2b8a3');
+  b.box(0.36, 0.18, 0.3, -0.2, 0.03, -0.22, '#f1f5f9');
+  b.gable(0.4, 0.1, 0.34, -0.2, 0.21, -0.22, '#0369a1');
+  b.box(0.3, 0.04, 0.9, 0.25, 0.03, 0.05, '#8b6a4a'); // ponton
+  for (let k = 0; k < 4; k++) b.cyl(0.02, 0.12, 0.38, -0.3 + k * 0.25, 0.03, '#5b4636', 6);
+  return b.build();
+}
+
+function taxiDepot(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#8f939a');
+  b.box(0.36, 0.16, 0.28, -0.25, 0.03, -0.25, '#e5e7eb');
+  b.box(0.2, 0.06, 0.02, -0.25, 0.14, -0.105, '#facc15');
+  for (let k = 0; k < 4; k++) b.box(0.08, 0.05, 0.15, 0.0 + k * 0.12, 0.03, 0.15, '#facc15');
+  return b.build();
+}
+
+function bikeStation(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#c9c4b8');
+  b.box(0.7, 0.02, 0.2, 0, 0.03, 0.1, '#4b5563');
+  for (let k = 0; k < 7; k++) {
+    b.box(0.015, 0.08, 0.14, -0.3 + k * 0.1, 0.05, 0.1, '#16a34a');
+    b.add(new THREE.TorusGeometry(0.035, 0.008, 4, 10).rotateY(Math.PI / 2), '#111827', -0.3 + k * 0.1, 0.09, 0.05);
+  }
+  b.box(0.08, 0.22, 0.06, 0.38, 0.03, -0.1, '#22c55e'); // borne
+  b.tree(-0.3, -0.25, 1);
+  return b.build();
+}
+
+function parking(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#8f939a');
+  for (let f = 0; f < 3; f++) {
+    b.box(0.86, 0.03, 0.8, 0, 0.03 + f * 0.14, -0.02, '#9ca3af');
+    for (let k = 0; k < 4; k++) b.box(0.03, 0.11, 0.03, -0.4 + k * 0.27, 0.06 + f * 0.14, 0.35, '#6b7280');
+    for (let k = 0; k < 5; k++) b.box(0.07, 0.04, 0.12, -0.32 + k * 0.16, 0.06 + f * 0.14, -0.2, ['#c0392b', '#2c3e50', '#ecf0f1', '#2980b9', '#7f8c8d'][(k + f) % 5]);
+  }
+  b.box(0.16, 0.16, 0.02, 0.32, 0.45, 0.4, '#2563eb'); // panneau P
+  b.box(0.06, 0.08, 0.025, 0.32, 0.49, 0.405, '#f8fafc');
+  return b.build();
+}
+
+/** Aéroport (5 × 3 cases) : piste, taxiway, terminal, tour de contrôle, avions. */
+function airport(): THREE.BufferGeometry {
+  const b = new Builder();
+  b.box(4.9, 1.2, 2.9, 0, -1.2, 0, '#b3a994');
+  b.box(4.96, 0.03, 2.96, 0, 0, 0, '#8fbf5a');
+  b.box(4.8, 0.012, 0.5, 0, 0.03, -0.8, '#3f4349'); // piste
+  for (let k = 0; k < 16; k++) b.box(0.15, 0.004, 0.03, -2.2 + k * 0.29, 0.043, -0.8, '#f8fafc');
+  b.box(4.2, 0.01, 0.16, 0, 0.03, -0.25, '#4b5057'); // taxiway
+  b.box(1.8, 0.01, 0.7, -0.6, 0.03, 0.45, '#6b7077'); // aire de stationnement
+  b.box(1.6, 0.3, 0.45, -0.6, 0.03, 1.1, '#e2e8f0'); // terminal
+  b.box(1.62, 0.12, 0.47, -0.6, 0.08, 1.1, '#7fb3d5');
+  b.add(new THREE.CylinderGeometry(0.4, 0.4, 1.6, 16, 1, false, 0, Math.PI).rotateZ(Math.PI / 2).scale(1, 0.25, 0.6), '#cbd5e1', -0.6, 0.33, 1.1);
+  b.cyl(0.06, 0.9, 1.0, 0.03, 0.9, '#d1d5db', 8); // tour de contrôle
+  b.cyl(0.13, 0.12, 1.0, 0.93, 0.9, '#7fb3d5', 10);
+  b.box(0.9, 0.22, 0.5, 1.8, 0.03, 0.95, '#cbd5e1'); // hangar
+  const plane = (x: number, z: number, r: number) => {
+    b.add(new THREE.CylinderGeometry(0.05, 0.04, 0.6, 8).rotateX(Math.PI / 2).rotateY(r), '#f8fafc', x, 0.1, z);
+    b.add(new THREE.BoxGeometry(0.7, 0.015, 0.14).rotateY(r), '#e2e8f0', x, 0.09, z);
+    b.add(new THREE.BoxGeometry(0.24, 0.012, 0.07).rotateY(r), '#e2e8f0', x - Math.sin(r) * 0.26, 0.12, z - Math.cos(r) * 0.26);
+  };
+  plane(-1.1, 0.45, 0); plane(-0.2, 0.45, 0); plane(1.2, -0.8, Math.PI / 2);
+  return b.build();
+}
+
+/** Port de commerce (3 × 2 cases) : quai, grues, conteneurs, entrepôt. */
+function harbor(): THREE.BufferGeometry {
+  const b = new Builder();
+  b.box(2.9, 1.2, 1.9, 0, -1.2, 0, '#b3a994');
+  b.box(2.96, 0.03, 1.96, 0, 0, 0, '#8a8f96');
+  b.box(2.96, 0.06, 0.25, 0, 0.0, 0.86, '#6b7280'); // quai
+  for (let k = 0; k < 2; k++) {
+    const x = -0.7 + k * 1.3;
+    for (const dx of [-0.15, 0.15]) b.box(0.04, 0.7, 0.04, x + dx, 0.03, 0.7, '#f97316');
+    b.box(0.1, 0.06, 1.3, x, 0.73, 0.5, '#f97316'); // flèche de grue
+    b.box(0.18, 0.12, 0.16, x, 0.6, 0.55, '#ea580c');
+  }
+  const colors = ['#c0392b', '#2980b9', '#27ae60', '#e67e22', '#8e44ad', '#16a085'];
+  for (let k = 0; k < 18; k++) b.box(0.3, 0.1, 0.12, -1.1 + (k % 6) * 0.42, 0.03 + Math.floor(k / 6) * 0.1, -0.1 + (k % 2) * 0.14, colors[k % 6]);
+  b.box(1.0, 0.28, 0.45, 0.8, 0.03, -0.65, '#cbd5e1');
+  return b.build();
+}
+
 export function createServiceModels(): Map<Service, THREE.BufferGeometry> {
   return new Map<Service, THREE.BufferGeometry>([
     [Service.PowerPlant, powerPlant()],
@@ -306,5 +411,15 @@ export function createServiceModels(): Map<Service, THREE.BufferGeometry> {
     [Service.Recycling, recycling()],
     [Service.Composting, composting()],
     [Service.LandfillSite, landfillSite()],
+    [Service.BusDepot, depot('#22c55e', '#15803d')],
+    [Service.TramDepot, depot('#f59e0b', '#b45309', true)],
+    [Service.MetroDepot, depot('#c026d3', '#86198f', true)],
+    [Service.TrainStation, trainStation()],
+    [Service.FerryPier, ferryPier()],
+    [Service.TaxiDepot, taxiDepot()],
+    [Service.BikeStation, bikeStation()],
+    [Service.Parking, parking()],
+    [Service.Airport, airport()],
+    [Service.Harbor, harbor()],
   ]);
 }

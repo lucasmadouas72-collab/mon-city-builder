@@ -199,6 +199,9 @@ export class Utilities {
       else if (s === Service.Incinerator) splat(air, i, j, 0.22, 7);
       else if (s === Service.LandfillSite) { splat(air, i, j, 0.15, 5); splat(noise, i, j, 0.04, 3); }
       else if (s === Service.Composting) splat(air, i, j, 0.05, 3);
+      else if (s === Service.Airport) { splat(noise, i + 2, j + 1, 0.4, 10); splat(air, i + 2, j + 1, 0.06, 6); }
+      else if (s === Service.Harbor) { splat(noise, i + 1, j, 0.15, 5); splat(air, i + 1, j, 0.05, 4); }
+      else if (s === Service.TrainStation) splat(noise, i, j, 0.05, 3);
       if (w.tiles[idx] === 1 && this.trafficDensity) {
         const d = Math.min(6, this.trafficDensity[idx]);
         if (d > 0.05) { splat(noise, i, j, d * 0.05, 2); splat(air, i, j, d * 0.02, 2); }

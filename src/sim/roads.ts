@@ -33,6 +33,28 @@ export const ROAD_INFO: Record<RoadType, RoadInfo> = {
 
 export const ROAD_TYPES = [RoadType.Street, RoadType.Avenue, RoadType.Highway, RoadType.Pedestrian] as const;
 
+/** Aménagements d'une case de route (bits). */
+export const enum RoadFlag {
+  Tram = 1,
+  Bike = 2,
+  BusLane = 4,
+  Zone30 = 8,
+  Tunnel = 16,
+  Elevated = 32,
+}
+
+/** Voies par sens : par défaut, minimum et maximum selon la famille. */
+export const LANES: Record<RoadType, [number, number, number]> = {
+  [RoadType.Street]: [1, 1, 1],
+  [RoadType.Avenue]: [2, 1, 3],
+  [RoadType.Highway]: [3, 2, 4],
+  [RoadType.Pedestrian]: [0, 0, 0],
+};
+/** Surcoût des tunnels et viaducs. */
+export const TUNNEL_COST_MUL = 4;
+export const ELEVATED_COST_MUL = 3;
+export const RAIL_COST = 45;
+
 /** Les ponts coûtent plus cher. */
 export const BRIDGE_COST_MUL = 5;
 /** Hauteur minimale du tablier (au-dessus du niveau de l'eau). */

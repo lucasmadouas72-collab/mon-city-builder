@@ -6,9 +6,9 @@ import { hasJobs } from './zones';
 /** Sauvegarde complète d'une partie, au format JSON (tableaux encodés en base64). */
 
 const VERSION = 1;
-const ARRAYS = ['heights', 'tiles', 'trees', 'zones', 'bState', 'bLevel', 'bVariant', 'bTimer', 'service', 'busStop', 'roadType', 'oneway', 'lights', 'links', 'bDamage', 'rubble', 'roadDamage', 'soilPol', 'lotRoot', 'lotSize', 'bFace', 'bStyle', 'bId', 'bManual', 'powerLine', 'resources', 'district', 'condition'] as const;
+const ARRAYS = ['heights', 'tiles', 'trees', 'zones', 'bState', 'bLevel', 'bVariant', 'bTimer', 'service', 'busStop', 'roadType', 'oneway', 'lights', 'links', 'bDamage', 'rubble', 'roadDamage', 'soilPol', 'lotRoot', 'lotSize', 'bFace', 'bStyle', 'bId', 'bManual', 'powerLine', 'resources', 'district', 'condition', 'roadFlags', 'lanes', 'rail', 'railLinks', 'annex'] as const;
 /** Tableaux ajoutés après la première version (absents des anciennes sauvegardes). */
-const OPTIONAL = new Set(['roadType', 'oneway', 'lights', 'links', 'bDamage', 'rubble', 'roadDamage', 'soilPol', 'lotRoot', 'lotSize', 'bFace', 'bStyle', 'bId', 'bManual', 'powerLine', 'resources', 'district', 'condition']);
+const OPTIONAL = new Set(['roadType', 'oneway', 'lights', 'links', 'bDamage', 'rubble', 'roadDamage', 'soilPol', 'lotRoot', 'lotSize', 'bFace', 'bStyle', 'bId', 'bManual', 'powerLine', 'resources', 'district', 'condition', 'roadFlags', 'lanes', 'rail', 'railLinks', 'annex']);
 type ArrayKey = (typeof ARRAYS)[number];
 
 function toB64(arr: ArrayBufferView): string {
@@ -54,7 +54,8 @@ export function serialize(sim: Simulation, config: GameConfig, camera?: CameraSt
       history: sim.history,
       env: { hour: sim.env.hour, weather: sim.env.weather },
       demo: { shares: sim.demo.shares, education: sim.demo.education },
-      lines: sim.transit.lines.map((l) => ({ kind: l.kind, stops: l.stops, color: l.color, name: l.name })),
+      lines: sim.transit.lines.map((l) => ({ kind: l.kind, stops: l.stops, color: l.color, name: l.name, target: l.target })),
+      transitStats: sim.transit.lastMonthStats,
       citizens: sim.society.citizens.serialize(),
       nextBuildingId: sim.nextBuildingId,
       waste: sim.waste.serialize(),
@@ -118,7 +119,7 @@ export function applySave(sim: Simulation, file: SaveFile): void {
   sim.society.refreshMarkets();
   for (const l of s.lines ?? []) {
     const line = sim.transit.addLine(l.kind, l.stops);
-    if (line) { line.color = l.color; line.name = l.name; sim.transit.refreshLine(line); }
+    if (line) { line.color = l.color; line.name = l.name; line.target = l.target ?? 0; sim.transit.refreshLine(line); }
   }
   sim.recomputeStats();
 }

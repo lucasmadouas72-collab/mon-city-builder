@@ -9,7 +9,8 @@ import { E, N, S, W } from '../sim/World';
 import { SERVICE_INFO, Service as Svc, type Service } from '../sim/services';
 import { BUS_STOP_COST } from '../sim/economy';
 import type { UndoStack } from '../sim/Undo';
-import { ROAD_INFO, RoadType } from '../sim/roads';
+import { ROAD_INFO, RoadFlag, RoadType } from '../sim/roads';
+import { KIND_NAMES, type TransitKind } from '../sim/Transit';
 import { gridPath, rasterize, sampleCurve, sampleLine, type Pt } from '../sim/roadGeometry';
 
 export type RoadMode = 'straight' | 'curve' | 'grid';
@@ -20,9 +21,16 @@ export const ROAD_TOOL: Partial<Record<string, RoadType>> = {
   road: RoadType.Street, avenue: RoadType.Avenue, highway: RoadType.Highway, pedestrian: RoadType.Pedestrian,
 };
 
-export type ToolId = 'select' | 'road' | 'avenue' | 'highway' | 'pedestrian' | 'oneway' | 'lights' | `zone${number}` | 'place' | 'move' | 'powerline' | 'district' | 'undistrict' | 'dezone' | 'bulldoze' | 'busstop' | 'busline' | 'metroline' | 'tUp' | 'tDown' | 'tSmooth' | 'tFlat' | 'tTrees' | `svc${number}`;
+export type ToolId = 'select' | 'road' | 'avenue' | 'highway' | 'pedestrian' | 'oneway' | 'lights' | `zone${number}` | 'place' | 'move' | 'powerline' | 'district' | 'undistrict' | 'dezone' | 'bulldoze' | 'busstop' | 'busline' | 'metroline' | 'rail' | 'tramtrack' | 'bikelane' | 'buslane' | 'zone30' | 'lanesUp' | 'lanesDown' | 'tramstop' | 'tramline' | 'trainline' | 'ferryline' | 'tUp' | 'tDown' | 'tSmooth' | 'tFlat' | 'tTrees' | `svc${number}`;
 
 const TERRAIN_MODE = { tUp: 'up', tDown: 'down', tSmooth: 'smooth', tFlat: 'flat', tTrees: 'trees' } as const;
+
+/** Outils de tracé de lignes de transport. */
+export const LINE_TOOLS: Partial<Record<ToolId, TransitKind>> = { busline: 'bus', tramline: 'tram', metroline: 'metro', trainline: 'train', ferryline: 'ferry' };
+const STOP_NAMES: Record<TransitKind, string> = { bus: 'un arrêt de bus', tram: 'un arrêt de tram', metro: 'une station de métro', train: 'une gare', ferry: 'un embarcadère' };
+/** Aménagements posés par glissement le long des routes. */
+export const FLAG_TOOLS: Partial<Record<ToolId, RoadFlag>> = { tramtrack: RoadFlag.Tram, bikelane: RoadFlag.Bike, buslane: RoadFlag.BusLane, zone30: RoadFlag.Zone30 };
+const FLAG_NAMES: Partial<Record<ToolId, string>> = { tramtrack: 'Voie de tram', bikelane: 'Piste cyclable', buslane: 'Voie de bus', zone30: 'Zone 30' };
 
 /** Équipement placé par un outil `svcN`, ou null. */
 export const toolService = (t: ToolId): Service | null => (t.startsWith('svc') ? (Number(t.slice(3)) as Service) : null);
@@ -62,7 +70,7 @@ export class ToolManager {
   onHover?: (info: HoverInfo | null) => void;
   onTooltip?: (tip: Tooltip | null) => void;
   /** Aperçu de la ligne de transport en cours de tracé. */
-  onDraft?: (kind: 'bus' | 'metro' | null, tiles: number[]) => void;
+  onDraft?: (kind: TransitKind | null, tiles: number[]) => void;
   private draft: number[] = [];
   /** Pile d'annulation (fournie par le jeu). */
   undo?: UndoStack;
@@ -261,13 +269,23 @@ export class ToolManager {
     sim.events.on('transitChanged', () => this.refresh());
   }
 
-  private get lineKind(): 'bus' | 'metro' | null {
-    return this.tool === 'busline' ? 'bus' : this.tool === 'metroline' ? 'metro' : null;
+  private get lineKind(): TransitKind | null {
+    return LINE_TOOLS[this.tool] ?? null;
   }
 
   private isStop(idx: number): boolean {
-    const w = this.sim.world;
-    return this.lineKind === 'bus' ? w.busStop[idx] === 1 : w.service[idx] === Svc.MetroStation;
+    return this.lineKind ? this.sim.transit.isStop(this.lineKind, idx) : false;
+  }
+
+  /** Outils qui tracent un chemin (routes, voie ferrée). */
+  private get pathTool(): boolean {
+    return !!ROAD_TOOL[this.tool] || this.tool === 'rail';
+  }
+
+  /** Ouvrage des routes : au sol, tunnel ou viaduc. */
+  setStructure(st: 'ground' | 'tunnel' | 'elevated'): void {
+    this.sim.roadStructure = st;
+    this.refresh();
   }
 
   private finishLine(): void {
@@ -279,7 +297,7 @@ export class ToolManager {
 
   private lineClick(idx: number): void {
     if (!this.isStop(idx)) {
-      this.sim.events.emit('notify', { text: this.lineKind === 'bus' ? 'Cliquez sur un arrêt de bus' : 'Cliquez sur une station de métro', kind: 'warn' });
+      this.sim.events.emit('notify', { text: `Cliquez sur ${STOP_NAMES[this.lineKind!]}`, kind: 'warn' });
       return;
     }
     if (this.draft.length >= 2 && idx === this.draft[0]) { this.finishLine(); return; }
@@ -399,12 +417,12 @@ export class ToolManager {
       return;
     }
     // Route courbe : 1er clic = départ, 2e = point de contrôle, 3e = arrivée
-    if (ROAD_TOOL[this.tool] && this.roadMode === 'curve' && this.hover) {
+    if (this.pathTool && this.roadMode === 'curve' && this.hover) {
       const p = this.snapCenter(this.hover.i, this.hover.j);
       this.dragStart = null;
       if (this.curvePts.length < 2) { this.curvePts.push(p); this.refresh(); return; }
       const { tiles } = this.roadPath(this.hover, this.hover);
-      this.act(() => this.sim.buildRoads(tiles, ROAD_TOOL[this.tool]));
+      this.act(() => (this.tool === 'rail' ? this.sim.buildRail(tiles) : this.sim.buildRoads(tiles, ROAD_TOOL[this.tool])));
       this.curvePts = [];
       this.refresh();
       return;
@@ -415,10 +433,15 @@ export class ToolManager {
       this.lineClick(tiles[0]);
     } else if (tiles && this.tool === 'busstop') {
       this.act(() => this.sim.placeBusStop(tiles[0]));
+    } else if (tiles && this.tool === 'tramstop') {
+      this.act(() => this.sim.placeTramStop(tiles[0]));
     } else if (tiles) {
       const zone = TOOL_ZONE[this.tool];
       this.act(() => {
         if (ROAD_TOOL[this.tool]) this.sim.buildRoads(tiles, ROAD_TOOL[this.tool]);
+        else if (this.tool === 'rail') this.sim.buildRail(tiles);
+        else if (FLAG_TOOLS[this.tool]) this.sim.paintRoadFlag(tiles, FLAG_TOOLS[this.tool]!);
+        else if (this.tool === 'lanesUp' || this.tool === 'lanesDown') this.sim.setLanes(tiles, this.tool === 'lanesUp' ? 1 : -1);
         else if (this.tool === 'oneway') this.sim.setOneway(tiles);
         else if (this.tool === 'powerline') this.sim.buildPowerLine(tiles);
         else if (this.tool === 'district') { this.districtId = this.sim.paintDistrict(tiles, this.districtId); this.onDistrict?.(this.districtId); }
@@ -439,12 +462,12 @@ export class ToolManager {
     if (!start || !end) return null;
     const w = this.sim.world;
     const out: number[] = [];
-    if (ROAD_TOOL[this.tool]) {
+    if (this.pathTool) {
       return this.roadPath(start, end).tiles;
     } else if (this.tool === 'powerline') {
       const a = this.snapCenter(start.i, start.j), b = this.snapCenter(end.i, end.j);
       return rasterize(sampleLine(a, b), w);
-    } else if (this.tool === 'oneway') {
+    } else if (this.tool === 'oneway' || FLAG_TOOLS[this.tool] || this.tool === 'lanesUp' || this.tool === 'lanesDown') {
       return this.alongRoads(w.index(start.i, start.j), w.index(end.i, end.j));
     } else if (this.tool === 'bulldoze' || this.tool === 'district' || this.tool === 'undistrict' || TOOL_ZONE[this.tool] !== undefined) {
       const [i0, i1] = [Math.min(start.i, end.i), Math.max(start.i, end.i)];
@@ -468,7 +491,7 @@ export class ToolManager {
     const tiles = this.currentSelection();
     this.tip = null;
     if (!this.lineKind) this.onDraft?.(null, []);
-    if (!ROAD_TOOL[this.tool]) this.showGhost(null);
+    if (!this.pathTool) this.showGhost(null);
     if (this.tool !== 'place' && !(this.tool === 'move' && this.moveFrom !== null)) { this.lastPlace = null; this.onPreview?.(null, null); }
     if (this.tool === 'select' && this.selected !== null) {
       const w = this.sim.world;
@@ -524,6 +547,29 @@ export class ToolManager {
       ov.set([[[t], ok ? OverlayColor.valid : OverlayColor.invalid]]);
       const on = w.lights[t] === 1 || w.lights[t] === 2;
       this.tip = ok ? { text: on ? 'Cliquez pour retirer les feux' : 'Cliquez pour installer des feux', kind: 'ok' } : { text: 'Choisissez un carrefour', kind: 'bad' };
+    } else if (FLAG_TOOLS[this.tool] || this.tool === 'lanesUp' || this.tool === 'lanesDown') {
+      const w = this.sim.world;
+      if (FLAG_TOOLS[this.tool]) {
+        const est = this.sim.estimateRoadFlag(tiles, FLAG_TOOLS[this.tool]!);
+        ov.set([[est.valid, est.remove ? OverlayColor.demolish : OverlayColor.valid], [est.invalid, OverlayColor.invalid]]);
+        this.tip = est.reason && !est.valid.length ? { text: est.reason, kind: 'bad' }
+          : { text: `${FLAG_NAMES[this.tool]} · ${est.valid.length} case(s) · ${est.remove ? 'retirer' : fmt(est.cost)} · glissez le long des routes`, kind: 'ok' };
+      } else {
+        const roads = tiles.filter((t) => w.tiles[t] === 1);
+        ov.set([[roads, OverlayColor.valid]]);
+        const t0 = roads[0];
+        this.tip = { text: `${this.tool === 'lanesUp' ? 'Ajouter' : 'Retirer'} une voie par sens · ${roads.length} case(s)${t0 !== undefined ? ` · actuellement ${w.lanesAt(t0)} voie(s) par sens` : ''}`, kind: 'info' };
+      }
+    } else if (this.tool === 'rail') {
+      const end = this.hover!;
+      const start = this.dragStart ?? end;
+      const preview = this.roadMode === 'curve' ? this.roadPath(end, end) : this.roadPath(start, end);
+      this.showGhost(this.dragStart || this.curvePts.length ? preview.points : null);
+      if (this.roadMode === 'curve') tiles.splice(0, tiles.length, ...preview.tiles);
+      const est = this.sim.estimateRail(tiles);
+      const bad = est.invalid.length > 0 || est.cost > this.sim.money;
+      ov.set([[est.valid, bad ? OverlayColor.invalid : OverlayColor.valid], [est.invalid, OverlayColor.invalid]]);
+      this.tip = est.reason ? { text: est.reason, kind: 'bad' } : { text: `Voie ferrée · ${est.valid.length} case(s) · ${fmt(est.cost)}`, kind: est.cost > this.sim.money ? 'bad' : 'ok' };
     } else if (ROAD_TOOL[this.tool]) {
       const type = ROAD_TOOL[this.tool]!;
       const end = this.hover!;
@@ -549,7 +595,8 @@ export class ToolManager {
         const upgrades = est.valid.filter((t) => w.tiles[t] === 1).length;
         const extra = [bridges ? `${bridges} de pont` : '', upgrades ? `${upgrades} remplacée(s)` : '', est.graded ? `${est.graded} terrassée(s)` : ''].filter(Boolean).join(', ');
         const step = this.roadMode === 'curve' ? (this.curvePts.length === 1 ? ' · cliquez pour placer le point de courbure' : ' · cliquez pour terminer') : '';
-        this.tip = { text: `${ROAD_INFO[type].name} · ${est.valid.length} case(s)${extra ? ` (${extra})` : ''} · ${fmt(est.cost)}${step}`, kind: tooExpensive ? 'bad' : 'ok' };
+        const struct = this.sim.roadStructure === 'tunnel' ? ' en tunnel' : this.sim.roadStructure === 'elevated' ? ' en viaduc' : '';
+        this.tip = { text: `${ROAD_INFO[type].name}${struct} · ${est.valid.length} case(s)${extra ? ` (${extra})` : ''} · ${fmt(est.cost)}${step}`, kind: tooExpensive ? 'bad' : 'ok' };
       }
     } else if (this.tool === 'bulldoze') {
       const est = this.sim.estimateBulldoze(tiles);
@@ -569,6 +616,11 @@ export class ToolManager {
       ov.set([[area, this.terrainMode === 'trees' ? OverlayColor.valid : OverlayColor.hover]]);
       const labels = { up: 'Élever', down: 'Abaisser', smooth: 'Lisser', flat: 'Aplanir', trees: 'Planter des arbres' };
       this.tip = { text: `${labels[this.terrainMode]} · rayon ${this.brush} (touches - et +)`, kind: 'info' };
+    } else if (this.tool === 'tramstop') {
+      const w = this.sim.world, idx = tiles[0];
+      const ok = w.tiles[idx] === 1 && (w.roadFlags[idx] & 1) !== 0 && w.busStop[idx] !== 2;
+      ov.set([[[idx], ok ? OverlayColor.valid : OverlayColor.invalid]]);
+      this.tip = ok ? { text: `Arrêt de tram · ${fmt(600)}`, kind: 'ok' } : { text: w.busStop[idx] === 2 ? 'Arrêt déjà présent' : 'Un arrêt de tram se place sur une voie de tram', kind: 'bad' };
     } else if (this.tool === 'busstop') {
       const w = this.sim.world;
       const idx = tiles[0];
@@ -583,16 +635,20 @@ export class ToolManager {
       const hoverStop = this.isStop(idx);
       const seq = hoverStop && this.draft[this.draft.length - 1] !== idx ? [...this.draft, idx] : [...this.draft];
       let preview: number[] = seq;
-      if (kind === 'bus' && seq.length >= 2) preview = this.sim.transit.routeFor(seq, false) ?? [];
+      if (kind !== 'metro' && seq.length >= 2) preview = this.sim.transit.routeFor(seq, false, kind) ?? [];
       this.onDraft?.(kind, preview);
       ov.set([[this.draft, OverlayColor.valid], [[idx], hoverStop ? OverlayColor.hover : OverlayColor.invalid]]);
-      const unlocked = kind === 'bus' ? this.sim.busUnlocked : this.sim.isServiceUnlocked(Svc.MetroStation);
-      const what = kind === 'bus' ? 'arrêt' : 'station';
-      this.tip = !unlocked ? { text: kind === 'bus' ? 'Bus débloqués à 1 200 habitants' : 'Métro débloqué à 3 000 habitants', kind: 'bad' }
-        : kind === 'bus' && seq.length >= 2 && !preview.length ? { text: 'Arrêts non reliés par la route', kind: 'bad' }
-        : this.draft.length === 0 ? { text: `Cliquez sur le premier ${what}`, kind: 'info' }
-        : this.draft.length >= 2 && idx === this.draft[0] ? { text: 'Cliquez pour fermer la ligne', kind: 'ok' }
-        : { text: `${this.draft.length} ${what}(s) · Entrée pour terminer, Échap pour annuler`, kind: 'info' };
+      const unlockSvc = { bus: 0, tram: Svc.TramDepot, metro: Svc.MetroStation, train: Svc.TrainStation, ferry: Svc.FerryPier }[kind];
+      const unlocked = kind === 'bus' ? this.sim.busUnlocked : this.sim.isServiceUnlocked(unlockSvc as Service);
+      const what = kind === 'bus' || kind === 'tram' ? 'arrêt' : kind === 'ferry' ? 'embarcadère' : kind === 'train' ? 'gare' : 'station';
+      // Éditeur de lignes (§12) : longueur, temps, véhicules conseillés, coût, correspondances
+      const pv = seq.length >= 2 ? this.sim.transit.preview(kind, seq) : null;
+      const details = pv?.ok ? ` · ${pv.lengthKm.toFixed(1)} km · tour en ${Math.round(pv.roundTripMin)} min · ${pv.recommended} véhicule(s) conseillé(s) · ${fmt(pv.cost)}/mois${pv.connections.length ? ` · correspondances : ${pv.connections.join(', ')}` : ''}` : '';
+      this.tip = !unlocked ? { text: `${KIND_NAMES[kind]} pas encore débloqué`, kind: 'bad' }
+        : kind !== 'metro' && seq.length >= 2 && !preview.length ? { text: kind === 'train' ? 'Gares non reliées par la voie ferrée' : kind === 'ferry' ? 'Embarcadères non reliés par l’eau' : kind === 'tram' ? 'Arrêts non reliés par une voie de tram' : 'Arrêts non reliés par la route', kind: 'bad' }
+        : this.draft.length === 0 ? { text: `Cliquez sur ${STOP_NAMES[kind]}`, kind: 'info' }
+        : this.draft.length >= 2 && idx === this.draft[0] ? { text: `Cliquez pour fermer la ligne${details}`, kind: 'ok' }
+        : { text: `${this.draft.length} ${what}(s)${details} · Entrée pour terminer`, kind: 'info' };
     } else if (toolService(this.tool)) {
       const type = toolService(this.tool)!;
       const info = SERVICE_INFO[type as Exclude<Service, 0>];

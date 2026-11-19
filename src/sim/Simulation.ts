@@ -18,11 +18,11 @@ import { Demographics } from './Population';
 import { DIFFICULTY, defaultConfig, type GameConfig } from '../game/config';
 import { Transit, type TransitKind } from './Transit';
 import {
-  EARLY_REPAY_PENALTY, BUDGET_KEYS, BUS_STOP_COST, BUS_UNLOCK, BUS_UPKEEP, DEFAULT_TAX, LOAN_OFFERS, MAX_LOANS, MAX_TAX, METRO_LINE_UPKEEP,
-  MILESTONES, MIN_TAX, TICKET_PRICE, defaultBudgets, defaultTaxes, loanPayment, milestoneIndex, type Loan,
+  EARLY_REPAY_PENALTY, BUDGET_KEYS, BUS_STOP_COST, BUS_UNLOCK, DEFAULT_TAX, LOAN_OFFERS, MAX_LOANS, MAX_TAX,
+  MILESTONES, MIN_TAX, defaultBudgets, defaultTaxes, loanPayment, milestoneIndex, type Loan,
 } from './economy';
 import type { BudgetKey } from './services';
-import { BRIDGE_COST_MUL, DIRS8, ROAD_INFO, RoadType, dirIndex } from './roads';
+import { BRIDGE_COST_MUL, DIRS8, ELEVATED_COST_MUL, LANES, RAIL_COST, ROAD_INFO, RoadFlag, RoadType, TUNNEL_COST_MUL, dirIndex } from './roads';
 import { ABANDON_DAYS, Coverage, SERVICE_INFO, Service, Utility } from './services';
 import {
   BuildState, hasHomes, hasJobs, jobKind, kindOf, Zone, ZONE_DEPTH, ZONE_INFO, zoneInfo, type LotShape, type ZoneId, type ZoneType,
@@ -120,7 +120,7 @@ export class Simulation {
   /** Population maximale atteinte (les déblocages ne se perdent pas). */
   maxPop = 0;
   milestone = 0;
-  private lastPassengers = 0;
+  lastPassengers = 0;
 
   private dayProgress = 0;
   private accumulator = 0;
@@ -168,6 +168,15 @@ export class Simulation {
     this.utilities.sickOf = (idx) => this.society.citizens.sickBy[idx];
     this.utilities.trafficDensity = this.traffic.density;
     this.transit = new Transit(world, this.traffic);
+    this.transit.weather = () => this.env.weather;
+    this.transit.hasDepot = (kind, line) => {
+      const w = this.world;
+      const want = kind === 'bus' ? Service.BusDepot : kind === 'tram' ? Service.TramDepot : kind === 'metro' ? Service.MetroDepot : 0;
+      if (!want) return true;
+      const net = kind === 'bus' ? this.utilities.networkOf(line.stops[0]) : -2;
+      for (let k = 0; k < w.service.length; k++) if (w.service[k] === want && (net === -2 || this.utilities.networkOf(k) === net)) return true;
+      return false;
+    };
     this.emergency = new Emergency(world, this.traffic);
     this.emergency.budget = (svc) => this.budgets[SERVICE_INFO[svc as Exclude<Service, Service.None>].budget] / 100;
     this.disasters = new Disasters(this);
@@ -223,6 +232,77 @@ export class Simulation {
   isUnlocked(zone: number): boolean {
     return this.sandbox || this.maxPop >= (zoneInfo(zone)?.unlockPop ?? 0);
   }
+
+  /** Voyageurs mensuels de l'aéroport. */
+  airportPassengers = 0;
+  /** Pression sur le stationnement des commerces et bureaux (demande / places), par case. */
+  parkingPressure: Float32Array = new Float32Array(0);
+
+  /** Attrait apporté par l'aéroport et les trains régionaux. */
+  private transportAppeal(): number {
+    const w = this.world;
+    return (w.service.includes(Service.Airport) ? 0.15 : 0) + Math.min(0.12, this.transit.regionalStations * 0.04) + (w.service.includes(Service.Harbor) ? 0.03 : 0);
+  }
+
+  /** Capacités supplémentaires d'export et de stockage : port, gares régionales, aéroport. */
+  freightBonus(): { export: number; storage: number } {
+    const w = this.world;
+    let harbors = 0, airport = 0;
+    for (let k = 0; k < w.service.length; k++) { if (w.service[k] === Service.Harbor) harbors++; else if (w.service[k] === Service.Airport) airport++; }
+    return { export: harbors * 250000 + this.transit.regionalStations * 80000 + airport * 60000, storage: harbors * 100000 + this.transit.regionalStations * 20000 };
+  }
+
+  /** Effet du stationnement sur les ventes d'un commerce (jusqu'à −15 % si les places manquent). */
+  parkingFactor(k: number): number {
+    const p = this.parkingPressure[k] ?? 0;
+    return p > 1 ? 1 - Math.min(0.15, (p - 1) * 0.1) : 1;
+  }
+
+  /** Stationnement (§4) : places sur voirie (3 par case de rue proche) et parkings (400 places partagées). */
+  private computeParking(): void {
+    const w = this.world, n = w.size, c = this.society.citizens;
+    if (this.parkingPressure.length !== w.tiles.length) this.parkingPressure = new Float32Array(w.tiles.length);
+    const P = this.parkingPressure;
+    P.fill(0);
+    const garages: number[] = [];
+    for (let k = 0; k < w.service.length; k++) if (w.service[k] === Service.Parking) garages.push(k);
+    for (let k = 0; k < w.bState.length; k++) {
+      if (w.bState[k] !== BuildState.Built) continue;
+      const kd = kindOf(w.zones[k]);
+      if (kd !== Zone.Commercial && kd !== Zone.Office) continue;
+      const demand = c.employees[k] * 0.35 + (kd === Zone.Commercial ? this.jobCapacity(k) * 0.8 : 0);
+      const i0 = k % n, j0 = Math.floor(k / n);
+      let street = 0;
+      for (let j = j0 - 2; j <= j0 + 2; j++) for (let i = i0 - 2; i <= i0 + 2; i++) if (w.inBounds(i, j) && w.carsAllowed(j * n + i) && !(w.roadFlags[j * n + i] & 48) && w.roadType[j * n + i] !== RoadType.Highway) street++;
+      let garage = 0;
+      for (const g of garages) if (Math.abs((g % n) - i0) + Math.abs(Math.floor(g / n) - j0) <= 6) garage += 60;
+      P[k] = demand / Math.max(1, street * 3 + garage);
+    }
+  }
+
+  /** Accidents sur les routes chargées, fin des incidents (§12). */
+  private trafficIncidents(): void {
+    const w = this.world, dens = this.traffic.density;
+    for (let k = 0; k < w.incident.length; k++) if (w.incident[k]) { w.incident[k]--; if (!w.incident[k]) w.incidentKind[k] = 0; }
+    for (let k = 0; k < this.traffic.volume.length; k++) this.traffic.volume[k] *= 0.85;
+    const bad = ['rain', 'snow', 'fog', 'frost', 'storm'].includes(this.env.weather) ? 2 : 1;
+    for (let s = 0; s < 40; s++) {
+      const k = Math.floor(this.rand() * w.tiles.length);
+      if (w.tiles[k] !== Tile.Road || dens[k] < 1.2 || w.incident[k]) continue;
+      if (this.rand() < dens[k] * 0.02 * bad * (w.roadFlags[k] & RoadFlag.Zone30 ? 0.4 : 1)) {
+        w.incident[k] = 2 + Math.floor(this.rand() * 3);
+        w.incidentKind[k] = 1;
+        this.accidentsThisMonth++;
+        if (this.dayCount - this.lastAccidentNote > 15) {
+          this.lastAccidentNote = this.dayCount;
+          this.events.emit('notify', { text: 'Accident de la circulation : la route est ralentie quelques jours', kind: 'warn', tile: k });
+        }
+      }
+    }
+  }
+  accidentsThisMonth = 0;
+  accidentsLastMonth = 0;
+  private lastAccidentNote = -999;
 
   /** Prochain identifiant de bâtiment (stable, sauvegardé). */
   nextBuildingId = 1;
@@ -339,6 +419,7 @@ export class Simulation {
     const sub = Math.ceil(scaled / 0.05);
     this.env.advance(scaled);
     this.emergency.update(scaled);
+    this.transit.advance(scaled);
     this.disasters.update(scaled);
     this.traffic.speedFactor = this.env.trafficSpeed;
     const target = Math.round(this.traffic.targetVehicles(this.stats.population, this.stats.totalJobs) * (1 - this.traffic.transitShare) * this.env.trafficVolume);
@@ -375,6 +456,7 @@ export class Simulation {
     this.utilities.daily();
     this.waste.daily();
     this.maintainDaily();
+    this.trafficIncidents();
     this.society.citizens.tally();
     if (this.dayCount % 10 === 0) this.computeCrime();
 
@@ -532,7 +614,10 @@ export class Simulation {
     const cost = list.reduce((a, k) => a + this.renovationCost(k), 0);
     if (!list.length) return false;
     if (!this.sandbox && cost > this.money) { this.events.emit('notify', { text: 'Fonds insuffisants pour la rénovation', kind: 'error' }); return false; }
-    for (const k of list) w.condition[k] = 100;
+    for (const k of list) {
+      w.condition[k] = 100;
+      if (w.tiles[k] === Tile.Road) { w.incident[k] = 4; w.incidentKind[k] = 2; } // travaux
+    }
     this.spend(cost, 'renovation');
     this.recomputeStats();
     this.events.emit('roadsChanged', { tiles: [] });
@@ -1003,6 +1088,7 @@ export class Simulation {
     const wst = this.waste.stats;
     this.utilities.stats.demand[Utility.Garbage] = wst.produced;
     this.utilities.stats.supply[Utility.Garbage] = wst.capacity + Math.min(wst.landfillCap - wst.landfillUsed, wst.produced);
+    this.computeParking();
     const totalJobs = jobs[Zone.Commercial] + jobs[Zone.Industrial] + jobs[Zone.Office];
     const workers = employed + jobless;
     const unemployment = workers ? jobless / workers : 0;
@@ -1030,7 +1116,15 @@ export class Simulation {
     // Recettes
     // Impôt sur le revenu des ménages et impôt sur les bénéfices des entreprises
     const incomeBy: Record<string, number> = soc.taxIncome(this.taxes, 1);
-    incomeBy.tickets = this.lastPassengers * TICKET_PRICE;
+    incomeBy.tickets = this.transit.ticketRevenue;
+    let taxis = 0, airports = 0;
+    for (let k = 0; k < w.service.length; k++) { if (w.service[k] === Service.TaxiDepot) taxis++; else if (w.service[k] === Service.Airport) airports++; }
+    this.transit.taxiFleet = Math.round(taxis * 10 * (this.budgets.transport / 100));
+    this.transit.population = population;
+    incomeBy.taxi = taxis * 10 * 40;
+    // Aéroport : redevances selon les voyageurs (habitants, affaires, touristes)
+    this.airportPassengers = airports ? Math.round(population * 0.4 + this.tourismAppeal * 6000) * airports : 0;
+    incomeBy.airport = this.airportPassengers * 1.5;
     // Ventes aux villes voisines et revente des matériaux recyclés
     const ps = this.utilities.stats.power, ws = this.utilities.stats.water;
     incomeBy.energy = ps.exported * POWER_EXPORT_PRICE;
@@ -1052,7 +1146,7 @@ export class Simulation {
     }
     let stops = 0;
     for (let k = 0; k < w.busStop.length; k++) stops += w.busStop[k];
-    expensesBy.transport += (this.transit.busCount * BUS_UPKEEP + stops * 10 + this.transit.metroLines * METRO_LINE_UPKEEP) * (this.budgets.transport / 100);
+    expensesBy.transport += this.transit.operatingCost + stops * 10 * (this.budgets.transport / 100);
     expensesBy.loans = this.loans.reduce((sum, l) => sum + l.payment, 0);
     expensesBy.reconstruction = this.repairAccum;
     expensesBy.imports = ps.imported * POWER_IMPORT_PRICE + ws.imported * WATER_IMPORT_PRICE;
@@ -1063,7 +1157,7 @@ export class Simulation {
     const pol = this.districts.budget();
     expensesBy.policies = pol.cost;
     incomeBy.fees = pol.income;
-    for (const k in incomeBy) incomeBy[k] = Math.round(incomeBy[k] * (k === 'tickets' || k === 'energy' || k === 'recycling' || k === 'fees' ? 1 : this.incomeMul));
+    for (const k in incomeBy) incomeBy[k] = Math.round(incomeBy[k] * (['tickets', 'energy', 'recycling', 'fees', 'taxi', 'airport'].includes(k) ? 1 : this.incomeMul));
     for (const k in expensesBy) expensesBy[k] = Math.round(expensesBy[k]);
     const income = Object.values(incomeBy).reduce((a, b) => a + b, 0);
     const expenses = Object.values(expensesBy).reduce((a, b) => a + b, 0);
@@ -1089,6 +1183,8 @@ export class Simulation {
 
   private onNewMonth(): void {
     this.lastPassengers = this.transit.onNewMonth();
+    this.accidentsLastMonth = this.accidentsThisMonth;
+    this.accidentsThisMonth = 0;
     const us = this.utilities.stats;
     void us;
     this.society.monthly();
@@ -1156,10 +1252,33 @@ export class Simulation {
     return this.sandbox || this.maxPop >= ROAD_INFO[t].unlockPop;
   }
 
+  /** Ouvrage des routes tracées : au sol, en tunnel ou en viaduc. */
+  roadStructure: 'ground' | 'tunnel' | 'elevated' = 'ground';
+
   estimateRoads(path: number[], type: RoadType = RoadType.Street): CostEstimate {
     const w = this.world;
     const out: CostEstimate = { cost: 0, valid: [], invalid: [], reason: null };
     const info = ROAD_INFO[type];
+    const structure = type === RoadType.Pedestrian ? 'ground' : this.roadStructure;
+    if (structure !== 'ground') {
+      // Tunnels et viaducs : ignorent le relief et l'eau, sans terrassement
+      const mul = structure === 'tunnel' ? TUNNEL_COST_MUL : ELEVATED_COST_MUL;
+      const onPath2 = new Set(path);
+      for (const idx of path) {
+        const i = idx % w.size, j = Math.floor(idx / w.size);
+        if (w.tiles[idx] === Tile.Road) {
+          const follows = w.neighbors(idx).every((q) => onPath2.has(q));
+          const flag = structure === 'tunnel' ? RoadFlag.Tunnel : RoadFlag.Elevated;
+          if (follows && (w.roadType[idx] !== type || !(w.roadFlags[idx] & flag))) { out.valid.push(idx); out.cost += info.cost * mul; }
+          continue;
+        }
+        const bad = !w.inBounds(i, j) ? 'Hors de la carte' : w.service[idx] || w.annex[idx] ? 'Case occupée par un équipement' : w.rail[idx] ? 'Voie ferrée sur la case' : null;
+        if (bad) { out.invalid.push(idx); out.reason ??= bad; continue; }
+        out.valid.push(idx);
+        out.cost += info.cost * mul;
+      }
+      return out;
+    }
     if (!this.isRoadUnlocked(type)) {
       out.invalid = path;
       out.reason = `${info.name} : débloquée à ${info.unlockPop.toLocaleString('fr-FR')} habitants`;
@@ -1213,10 +1332,15 @@ export class Simulation {
     let treesRemoved = false;
     const removedBuildings: number[] = [];
     let added = 0;
+    const structure = type === RoadType.Pedestrian ? 'ground' : this.roadStructure;
     for (const idx of est.valid) {
       if (w.tiles[idx] !== Tile.Road) { added++; w.condition[idx] = 100; }
       w.tiles[idx] = Tile.Road;
       w.roadType[idx] = type;
+      w.roadFlags[idx] = (w.roadFlags[idx] & ~(RoadFlag.Tunnel | RoadFlag.Elevated)) | (structure === 'tunnel' ? RoadFlag.Tunnel : structure === 'elevated' ? RoadFlag.Elevated : 0);
+      if (type === RoadType.Pedestrian || type === RoadType.Highway) w.roadFlags[idx] &= ~(RoadFlag.Tram | RoadFlag.Zone30);
+      const lim = LANES[type];
+      if (w.lanes[idx] && (w.lanes[idx] < lim[1] || w.lanes[idx] > lim[2])) w.lanes[idx] = 0;
       if (type === RoadType.Pedestrian || type === RoadType.Highway) w.busStop[idx] = type === RoadType.Highway ? 0 : w.busStop[idx];
       if (w.trees[idx]) { w.trees[idx] = 0; treesRemoved = true; }
       if (w.zones[idx]) {
@@ -1230,6 +1354,7 @@ export class Simulation {
     // Terrassement automatique des cases trop pentues
     let graded = false;
     for (const idx of est.valid) {
+      if (structure !== 'ground') break;
       const i = idx % n, j = Math.floor(idx / n);
       const [lo, hi] = w.tileMinMax(i, j);
       if (hi - lo <= MAX_ROAD_SLOPE || w.isWater(i, j)) continue;
@@ -1318,7 +1443,7 @@ export class Simulation {
     const j = (z: Zone) => jobsOf[z] ?? 0;
     const happy = population ? us.happiness : 0.6;
     // Attrait touristique : parcs, eau, bonheur, sécurité
-    this.tourismAppeal = clamp(this.council.mod('tourism') + (us.coverage[Coverage.Park] ?? 0) * 0.5 + (happy - 0.4) * 0.8 + (1 - this.crimeIndex) * 0.2 + Math.min(0.2, population / 20000), 0, 1);
+    this.tourismAppeal = clamp(this.council.mod('tourism') + this.transportAppeal() + (us.coverage[Coverage.Park] ?? 0) * 0.5 + (happy - 0.4) * 0.8 + (1 - this.crimeIndex) * 0.2 + Math.min(0.2, population / 20000), 0, 1);
     const bs = soc.stats;
     const d: Record<number, number> = {};
     d[Zone.ResidentialLow] = demand[Zone.Residential] + 0.05;
@@ -1326,7 +1451,7 @@ export class Simulation {
     d[Zone.ResidentialHigh] = demand[Zone.Residential] + (population > 3000 ? 0.1 : -0.05);
     d[Zone.Commercial] = demand[Zone.Commercial];
     d[Zone.CommercialDense] = demand[Zone.Commercial] + (population > 4000 ? 0.1 : -0.1);
-    d[Zone.Office] = demand[Zone.Office];
+    d[Zone.Office] = demand[Zone.Office] + (w.service.includes(Service.Airport) ? 0.1 : 0);
     d[Zone.Industrial] = demand[Zone.Industrial];
     d[Zone.Mixed] = (demand[Zone.Residential] + demand[Zone.Commercial]) / 2 + 0.05;
     d[Zone.Agriculture] = demand[Zone.Industrial] * 0.5 + 0.2 - j(Zone.Agriculture) / (population * 0.05 + 40);
@@ -1396,10 +1521,36 @@ export class Simulation {
     if (!this.isServiceUnlocked(type)) {
       return { ok: false, reason: `Débloqué à ${info.unlockPop.toLocaleString('fr-FR')} habitants`, cost: info.cost };
     }
-    const reason = w.serviceBlocker(i, j, type);
+    const reason = info.footprint ? this.footprintBlocker(idx, type) : w.serviceBlocker(i, j, type);
     if (reason) return { ok: false, reason, cost: info.cost };
+    const near = (pred: (k: number) => boolean) => { for (let b = j - 1; b <= j + 1; b++) for (let a = i - 1; a <= i + 1; a++) if (w.inBounds(a, b) && pred(w.index(a, b))) return true; return false; };
+    if (info.needsRail && !near((k) => w.rail[k] === 1)) return { ok: false, reason: 'Une gare doit toucher une voie ferrée', cost: info.cost };
+    if (info.needsTram && !near((k) => (w.roadFlags[k] & RoadFlag.Tram) !== 0)) return { ok: false, reason: 'Le dépôt doit toucher une voie de tram', cost: info.cost };
     if (info.cost > this.money) return { ok: false, reason: 'Fonds insuffisants', cost: info.cost };
     return { ok: true, reason: null, cost: info.cost };
+  }
+
+  /** Grand équipement : toutes les cases de l'emprise doivent être libres et assez plates, avec une route le long. */
+  private footprintBlocker(root: number, type: Service): string | null {
+    const w = this.world, n = w.size, info = SERVICE_INFO[type as Exclude<Service, Service.None>];
+    const [fw, fh] = info.footprint!;
+    const i0 = root % n, j0 = Math.floor(root / n);
+    if (!w.inBounds(i0 + fw - 1, j0 + fh - 1)) return 'Hors de la carte';
+    let road = false, water = false;
+    for (let j = j0; j < j0 + fh; j++) for (let i = i0; i < i0 + fw; i++) {
+      const k = j * n + i;
+      if (w.tiles[k] === Tile.Road) return 'Une route traverse l’emprise';
+      if (w.service[k] || w.annex[k]) return 'Emprise occupée par un équipement';
+      if (w.bState[k]) return 'Emprise occupée par un bâtiment';
+      if (w.rail[k]) return 'Une voie ferrée traverse l’emprise';
+      if (w.isWater(i, j)) return "Impossible de construire sur l'eau";
+      if (w.roadDist[k] === 1) road = true;
+    }
+    for (let j = j0 - 2; j < j0 + fh + 2 && !water; j++) for (let i = i0 - 2; i < i0 + fw + 2; i++) if (w.inBounds(i, j) && w.isWater(i, j)) { water = true; break; }
+    if (w.rectSlope(i0, j0, fw, fh) > 1) return 'Terrain trop pentu : aplanissez l’emprise';
+    if (!road) return 'L’emprise doit longer une route';
+    if (info.nearWater && !water) return "Doit être au bord de l'eau";
+    return null;
   }
 
   placeService(idx: number, type: Service): boolean {
@@ -1415,7 +1566,20 @@ export class Simulation {
     if (w.trees[idx]) { w.trees[idx] = 0; this.events.emit('treesChanged', undefined); }
     w.service[idx] = type;
     w.condition[idx] = 100;
+    const fp = SERVICE_INFO[type as Exclude<Service, Service.None>].footprint;
+    if (fp) {
+      const n = w.size, i0 = idx % n, j0 = Math.floor(idx / n);
+      for (let j = j0; j < j0 + fp[1]; j++) for (let i = i0; i < i0 + fp[0]; i++) {
+        const k = j * n + i;
+        if (k === idx) continue;
+        w.annex[k] = idx + 1;
+        if (w.zones[k]) { w.zones[k] = Zone.None; this.zonedDirty = true; }
+        if (w.trees[k]) w.trees[k] = 0;
+      }
+      this.events.emit('treesChanged', undefined);
+    }
     this.spend(est.cost, 'services');
+    if (SERVICE_INFO[type as Exclude<Service, Service.None>].category === 'transport') { this.transit.refreshAll(); this.events.emit('transitChanged', undefined); }
     this.recomputeStats();
     this.events.emit('servicesChanged', undefined);
     this.events.emit('zonesChanged', undefined);
@@ -1443,8 +1607,9 @@ export class Simulation {
     const line = this.transit.addLine(kind, stops);
     if (!line) return false;
     if (line.broken) {
+      const why = line.reason || 'arrêts non reliés';
       this.transit.removeLine(line.id);
-      this.events.emit('notify', { text: 'Ligne impossible : les arrêts ne sont pas reliés par la route', kind: 'warn' });
+      this.events.emit('notify', { text: `Ligne impossible : ${why.charAt(0).toLowerCase()}${why.slice(1)}`, kind: 'warn' });
       return false;
     }
     this.recomputeStats();
@@ -1545,6 +1710,145 @@ export class Simulation {
     this.events.emit('terrainChanged', undefined);
     if (trees) this.events.emit('treesChanged', undefined);
     if (zones) this.events.emit('zonesChanged', undefined);
+    return true;
+  }
+
+  // ---------- Aménagements des routes et voies ferrées (§4, §12) ----------
+
+  /** Coût par case de chaque aménagement. */
+  static readonly FLAG_COST: Record<number, number> = { [RoadFlag.Tram]: 40, [RoadFlag.Bike]: 6, [RoadFlag.BusLane]: 4, [RoadFlag.Zone30]: 2 };
+
+  /** Cases où l'aménagement est possible, et raison sinon. */
+  estimateRoadFlag(tiles: number[], flag: RoadFlag): CostEstimate & { remove: boolean } {
+    const w = this.world;
+    const out = { cost: 0, valid: [] as number[], invalid: [] as number[], reason: null as string | null, remove: false };
+    const roads = tiles.filter((k) => w.tiles[k] === Tile.Road);
+    out.remove = roads.length > 0 && roads.every((k) => w.roadFlags[k] & flag);
+    for (const k of tiles) {
+      if (w.tiles[k] !== Tile.Road) { out.invalid.push(k); continue; }
+      const t = w.roadType[k] as RoadType;
+      let bad: string | null = null;
+      if (flag === RoadFlag.Tram && (t === RoadType.Highway || t === RoadType.Pedestrian)) bad = 'Le tram circule sur les rues et avenues';
+      if (flag === RoadFlag.BusLane && w.lanesAt(k) < 2) bad = 'Voie de bus : il faut au moins 2 voies par sens (avenue, autoroute)';
+      if (flag === RoadFlag.Bike && t === RoadType.Highway) bad = 'Pas de piste cyclable sur autoroute';
+      if (flag === RoadFlag.Zone30 && (t === RoadType.Highway || t === RoadType.Pedestrian)) bad = 'Zone 30 : rues et avenues uniquement';
+      if (bad && !out.remove) { out.invalid.push(k); out.reason ??= bad; continue; }
+      out.valid.push(k);
+      if (!out.remove) out.cost += Simulation.FLAG_COST[flag] ?? 0;
+    }
+    if (flag === RoadFlag.Tram && !this.isServiceUnlocked(Service.TramDepot)) { out.reason = 'Tramway débloqué à 2 500 habitants'; out.invalid = tiles; out.valid = []; }
+    return out;
+  }
+
+  /** Pose ou retire un aménagement (voie de tram, piste cyclable, voie de bus, zone 30). */
+  paintRoadFlag(tiles: number[], flag: RoadFlag): boolean {
+    const est = this.estimateRoadFlag(tiles, flag);
+    if (!est.valid.length) { if (est.reason) this.events.emit('notify', { text: est.reason, kind: 'warn' }); return false; }
+    if (!this.sandbox && est.cost > this.money) { this.events.emit('notify', { text: 'Fonds insuffisants', kind: 'error' }); return false; }
+    const w = this.world;
+    for (const k of est.valid) {
+      if (est.remove) { w.roadFlags[k] &= ~flag; if (flag === RoadFlag.Tram && w.busStop[k] === 2) w.busStop[k] = 0; }
+      else w.roadFlags[k] |= flag;
+    }
+    this.spend(est.cost, 'transport');
+    this.transit.refreshAll();
+    this.recomputeStats();
+    this.events.emit('roadsChanged', { tiles: est.valid });
+    this.events.emit('transitChanged', undefined);
+    return true;
+  }
+
+  /** Ajoute ou retire une voie par sens sur des cases de route. */
+  setLanes(tiles: number[], delta: number): boolean {
+    const w = this.world;
+    const changed: number[] = [];
+    let cost = 0;
+    for (const k of tiles) {
+      if (w.tiles[k] !== Tile.Road) continue;
+      const [, lo, hi] = LANES[w.roadType[k] as RoadType];
+      const cur = w.lanesAt(k), next = Math.max(lo, Math.min(hi, cur + delta));
+      if (next === cur) continue;
+      changed.push(k);
+      if (delta > 0) cost += 25 * (w.roadType[k] === RoadType.Highway ? 2 : 1);
+    }
+    if (!changed.length) { this.events.emit('notify', { text: delta > 0 ? 'Nombre maximal de voies atteint pour ce type de route' : 'Nombre minimal de voies atteint', kind: 'warn' }); return false; }
+    if (!this.sandbox && cost > this.money) { this.events.emit('notify', { text: 'Fonds insuffisants', kind: 'error' }); return false; }
+    for (const k of changed) {
+      w.lanes[k] = Math.max(1, w.lanesAt(k) + delta);
+      if (w.lanesAt(k) < 2) w.roadFlags[k] &= ~RoadFlag.BusLane;
+    }
+    this.spend(cost, 'roads');
+    this.events.emit('roadsChanged', { tiles: changed });
+    return true;
+  }
+
+  /** Voie ferrée : séparée des routes, peut les croiser (passage à niveau) et franchir l'eau. */
+  estimateRail(path: number[]): CostEstimate {
+    const w = this.world;
+    const out: CostEstimate = { cost: 0, valid: [], invalid: [], reason: null };
+    if (!this.isServiceUnlocked(Service.TrainStation)) return { ...out, invalid: path, reason: 'Trains débloqués à 2 000 habitants' };
+    for (const k of path) {
+      if (w.rail[k]) continue;
+      const i = k % w.size, j = Math.floor(k / w.size);
+      const [lo, hi] = w.tileMinMax(i, j);
+      const water = w.isWater(i, j);
+      const steep = !water && hi - lo > MAX_ROAD_SLOPE && w.tiles[k] !== Tile.Road;
+      const grade = steep && this.canGrade(i, j);
+      const bad = w.service[k] || w.annex[k] ? 'Case occupée par un équipement' : w.bState[k] ? 'Un bâtiment occupe la case' : water && lo < -2.2 ? 'Eau trop profonde' : steep && !grade ? 'Terrain trop pentu : aplanissez-le' : null;
+      if (bad) { out.invalid.push(k); out.reason ??= bad; continue; }
+      out.valid.push(k);
+      out.cost += RAIL_COST * (water ? BRIDGE_COST_MUL : 1) + w.trees[k] * TREE_CLEAR_COST + (grade ? GRADE_COST : 0);
+      if (grade) out.graded = (out.graded ?? 0) + 1;
+    }
+    return out;
+  }
+
+  buildRail(path: number[]): boolean {
+    const est = this.estimateRail(path);
+    const w = this.world, n = w.size;
+    if (est.invalid.length) { this.events.emit('notify', { text: est.reason ?? 'Tracé impossible', kind: 'warn' }); return false; }
+    if (!this.sandbox && est.cost > this.money) { this.events.emit('notify', { text: 'Fonds insuffisants', kind: 'error' }); return false; }
+    let trees = false, zones = false;
+    // Terrassement des cases trop pentues
+    let graded = false;
+    for (const k of est.valid) {
+      const i = k % n, j = Math.floor(k / n);
+      const [lo, hi] = w.tileMinMax(i, j);
+      if (hi - lo <= MAX_ROAD_SLOPE || w.isWater(i, j) || w.tiles[k] === Tile.Road) continue;
+      const corners = [[i, j], [i + 1, j], [i, j + 1], [i + 1, j + 1]];
+      const avg = corners.reduce((sum, [a, b]) => sum + w.corner(a, b), 0) / 4;
+      for (const [a, b] of corners) if (!this.cornerLocked(a, b, true)) w.heights[b * (n + 1) + a] = avg + (w.corner(a, b) - avg) * 0.3;
+      graded = true;
+    }
+    if (graded) this.events.emit('terrainChanged', undefined);
+    for (const k of est.valid) {
+      w.rail[k] = 1;
+      if (w.trees[k]) { w.trees[k] = 0; trees = true; }
+      if (w.zones[k]) { w.zones[k] = Zone.None; zones = true; this.zonedDirty = true; }
+    }
+    for (let k = 1; k < path.length; k++) {
+      const a = path[k - 1], b = path[k];
+      if (dirIndex((b % n) - (a % n), Math.floor(b / n) - Math.floor(a / n)) >= 0) w.connectRail(a, b);
+    }
+    this.spend(est.cost, 'transport');
+    if (trees) this.events.emit('treesChanged', undefined);
+    if (zones) this.events.emit('zonesChanged', undefined);
+    this.transit.refreshAll();
+    this.recomputeStats();
+    this.events.emit('railChanged', undefined);
+    this.events.emit('transitChanged', undefined);
+    return true;
+  }
+
+  /** Arrêt de tram sur une case de route équipée d'une voie de tram. */
+  placeTramStop(idx: number): boolean {
+    const w = this.world;
+    if (!(w.roadFlags[idx] & RoadFlag.Tram) || w.tiles[idx] !== Tile.Road) { this.events.emit('notify', { text: 'Un arrêt de tram se place sur une voie de tram', kind: 'warn' }); return false; }
+    if (w.busStop[idx] === 2) return false;
+    if (!this.sandbox && this.money < 600) { this.events.emit('notify', { text: 'Fonds insuffisants', kind: 'error' }); return false; }
+    w.busStop[idx] = 2;
+    this.spend(600, 'transport');
+    this.events.emit('transitChanged', undefined);
     return true;
   }
 
@@ -1756,6 +2060,7 @@ export class Simulation {
     if (w.service[from]) {
       const svc = w.service[from] as Service;
       const info = SERVICE_INFO[svc as Exclude<Service, Service.None>];
+      if (info.footprint) return { ok: false, tiles: [], invalid: [], reasons: ['Un grand équipement ne se déplace pas : démolissez-le puis reconstruisez-le'], warnings: [], cost: 0, rect: [0, 0, 1, 1], face: S };
       const k = w.index(i, j);
       const out: PlaceEstimate = { ok: false, tiles: [k], invalid: [], reasons: [], warnings: [], cost: Math.round(info.cost * 0.2), rect: [i, j, 1, 1], face: S };
       const block = k === from ? null : w.serviceBlocker(i, j, svc);
@@ -1844,13 +2149,17 @@ export class Simulation {
     const tiles: number[] = [];
     // Un bâtiment sur plusieurs cases est démoli en entier
     const all = new Set<number>();
-    for (const idx of area) {
+    for (const raw of area) {
+      const idx = w.annex[raw] ? w.annex[raw] - 1 : raw;
       if (w.bState[idx] && !w.service[idx] && w.tiles[idx] !== Tile.Road) for (const t of w.lotTiles(idx)) all.add(t);
       else all.add(idx);
     }
     for (const idx of all) {
       if (w.powerLine[idx]) {
         refund += Math.round(POWER_LINE_COST * 0.3);
+        tiles.push(idx);
+      } else if (w.rail[idx] && w.tiles[idx] !== Tile.Road) {
+        refund += Math.round(RAIL_COST * 0.3);
         tiles.push(idx);
       } else if (w.tiles[idx] === Tile.Road) {
         refund += Math.round((ROAD_INFO[w.roadType[idx] as RoadType]?.cost ?? ROAD_COST) * ROAD_REFUND);
@@ -1880,14 +2189,21 @@ export class Simulation {
     const roads: number[] = [];
     const buildings: number[] = [];
     let trees = false, services = false;
-    let lines = false;
+    let lines = false, rails = false;
     for (const idx of est.tiles) {
       if (w.powerLine[idx]) {
         w.powerLine[idx] = 0;
         lines = true;
+      } else if (w.rail[idx] && w.tiles[idx] !== Tile.Road) {
+        w.rail[idx] = 0;
+        w.disconnectRail(idx);
+        rails = true;
       } else if (w.tiles[idx] === Tile.Road) {
         w.tiles[idx] = Tile.Empty;
         w.busStop[idx] = 0;
+        w.roadFlags[idx] = 0;
+        w.lanes[idx] = 0;
+        w.incident[idx] = 0;
         w.roadType[idx] = 0;
         w.oneway[idx] = 0;
         w.lights[idx] = 0;
@@ -1895,6 +2211,7 @@ export class Simulation {
         roads.push(idx);
       } else if (w.service[idx]) {
         w.service[idx] = Service.None;
+        for (let k = 0; k < w.annex.length; k++) if (w.annex[k] === idx + 1) w.annex[k] = 0;
         services = true;
       } else if (w.bState[idx]) {
         buildings.push(...this.clearBuilding(idx));
@@ -1913,6 +2230,7 @@ export class Simulation {
     }
     if (trees) this.events.emit('treesChanged', undefined);
     if (lines) { this.recomputeStats(); this.events.emit('powerLinesChanged', undefined); }
+    if (rails) { this.transit.refreshAll(); this.events.emit('railChanged', undefined); this.events.emit('transitChanged', undefined); }
     if (services) {
       this.transit.refreshAll();
       this.recomputeStats();

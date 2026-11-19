@@ -105,6 +105,18 @@ function garbageGeometry(): THREE.BufferGeometry {
   ])!;
 }
 
+function tramGeometry(): THREE.BufferGeometry {
+  const B = THREE.BoxGeometry;
+  return mergeGeometries([
+    part(new B(0.13, 0.12, 0.62), '#ffffff', 0, 0.08, 0), // caisse articulée (teintée)
+    part(new B(0.132, 0.05, 0.6), '#1d2733', 0, 0.105, 0), // vitres
+    part(new B(0.1, 0.012, 0.5), '#e5e7eb', 0, 0.146, 0), // toit
+    part(new B(0.01, 0.06, 0.01), '#4b5563', 0, 0.175, 0.05), // pantographe
+    part(new B(0.08, 0.008, 0.02), '#4b5563', 0, 0.205, 0.05),
+    part(new B(0.134, 0.02, 0.004), '#fde047', 0, 0.06, 0.312),
+  ])!;
+}
+
 /** Rendu instancié des véhicules, synchronisé à chaque image sur la simulation. */
 export class Vehicles {
   readonly group = new THREE.Group();
@@ -118,7 +130,7 @@ export class Vehicles {
 
   constructor(private world: World, private traffic: Traffic) {
     const mat = patchEnv(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.25 }), { headlights: true, snow: true });
-    this.meshes = [carGeometry(), truckGeometry(), busGeometry(), ambulanceGeometry(), fireTruckGeometry(), policeGeometry(), garbageGeometry()].map((g) => {
+    this.meshes = [carGeometry(), truckGeometry(), busGeometry(), ambulanceGeometry(), fireTruckGeometry(), policeGeometry(), garbageGeometry(), tramGeometry()].map((g) => {
       const mesh = new THREE.InstancedMesh(g, mat, MAX);
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.castShadow = true;
@@ -132,7 +144,7 @@ export class Vehicles {
 
   update(): void {
     const w = this.world;
-    const counts = [0, 0, 0, 0, 0, 0, 0];
+    const counts = [0, 0, 0, 0, 0, 0, 0, 0];
     const flash = Math.floor(performance.now() / 180) % 2 === 0;
     for (const v of this.traffic.vehicles) {
       const k = v.kind as number;

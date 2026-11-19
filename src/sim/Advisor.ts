@@ -102,6 +102,17 @@ export function diagnose(sim: Simulation): Issue[] {
     });
   }
 
+  // ----- Transports (§12) -----
+  const tr = sim.transit;
+  const over = tr.lines.filter((l) => tr.info(l).status === 'overloaded');
+  if (over.length) out.push({ id: 'lines-full', severity: 'warning', title: `${over.length} ligne(s) surchargée(s)`, causes: [`${over.map((l) => l.name).join(', ')} : capacité atteinte, des voyageurs reprennent la voiture.`], actions: ['Ajouter des véhicules (Transports → Gérer les lignes).', 'Créer une ligne parallèle ou un mode plus capacitaire (tram, métro).'], view: 'transport' });
+  const nodepot = tr.lines.filter((l) => l.reason.startsWith('Sans dépôt') || l.reason.startsWith('Aucun dépôt'));
+  if (nodepot.length) out.push({ id: 'depot', severity: 'warning', title: 'Lignes sans dépôt', causes: [`${nodepot.map((l) => l.name).join(', ')} : ${nodepot[0].reason.toLowerCase()}.`], actions: ['Construire le dépôt correspondant (menu Transports).'] });
+  if (sim.accidentsLastMonth >= 5) out.push({ id: 'accidents', severity: sim.accidentsLastMonth > 12 ? 'serious' : 'warning', title: `${sim.accidentsLastMonth} accidents le mois dernier`, causes: ['Routes saturées et météo défavorable.'], actions: ['Désengorger les axes (voies supplémentaires, transports en commun).', 'Zones 30 dans les quartiers résidentiels.'], view: 'volume' });
+  let parkingBad = 0;
+  for (let k = 0; k < sim.parkingPressure.length; k++) if (sim.parkingPressure[k] > 1.3) parkingBad++;
+  if (parkingBad > 8) out.push({ id: 'parking', severity: 'warning', title: `Stationnement saturé autour de ${parkingBad} commerces ou bureaux`, causes: ['Pas assez de places sur voirie pour les employés et les clients : les ventes baissent.'], actions: ['Construire des parkings (menu Transports).', 'Développer les transports en commun et le vélo.'], view: 'parking' });
+
   const abandoning = built.filter((k) => ut.problemDays[k] > 0);
   if (abandoning.length) {
     out.push({

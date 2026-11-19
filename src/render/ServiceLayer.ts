@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { E, N, W, type World } from '../sim/World';
 import { BuildState } from '../sim/zones';
-import { Service, Utility } from '../sim/services';
+import { SERVICE_INFO, Service, Utility } from '../sim/services';
 import type { Utilities } from '../sim/Utilities';
 import { createServiceModels } from './serviceModels';
 import { patchEnv } from './envMaterials';
@@ -97,6 +97,13 @@ export class ServiceLayer {
       const l = lists.get(type) ?? [];
       l.slice(0, 256).forEach((idx, k) => {
         const i = idx % w.size, j = Math.floor(idx / w.size);
+        const fp = SERVICE_INFO[type as Exclude<Service, 0>].footprint;
+        if (fp) {
+          // Grand équipement : posé au centre de son emprise, sans rotation
+          this.q.identity();
+          mesh.setMatrixAt(k, this.m.compose(new THREE.Vector3(i + fp[0] / 2, w.rectTop(i, j, fp[0], fp[1]), j + fp[1] / 2), this.q, new THREE.Vector3(1, 1, 1)));
+          return;
+        }
         const face = w.facing(i, j);
         const angle = face === E ? Math.PI / 2 : face === W ? -Math.PI / 2 : face === N ? Math.PI : 0;
         this.q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), angle);

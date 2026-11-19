@@ -26,6 +26,16 @@ export const enum Service {
   Recycling = 22,
   Composting = 23,
   LandfillSite = 24,
+  BusDepot = 25,
+  TramDepot = 26,
+  MetroDepot = 27,
+  TrainStation = 28,
+  FerryPier = 29,
+  TaxiDepot = 30,
+  BikeStation = 31,
+  Parking = 32,
+  Airport = 33,
+  Harbor = 34,
 }
 
 /** Ressources distribuées par le réseau routier. */
@@ -97,6 +107,11 @@ export interface ServiceInfo {
   nearEdge?: boolean;
   /** Pollution de l'air émise (multiplicateur). */
   air?: number;
+  /** Emprise en cases (largeur x, profondeur z) pour les grands équipements. */
+  footprint?: [number, number];
+  /** Doit toucher une voie ferrée / une voie de tram. */
+  needsRail?: boolean;
+  needsTram?: boolean;
 }
 
 export const SERVICE_INFO: Record<Exclude<Service, Service.None>, ServiceInfo> = {
@@ -216,6 +231,46 @@ export const SERVICE_INFO: Record<Exclude<Service, Service.None>, ServiceInfo> =
     name: 'Décharge', category: 'utilities', description: 'Stocke 40 000 t de déchets, puis est pleine. Bon marché mais nuisible.',
     cost: 2000, upkeep: 50, color: '#a16207', storage: 40000, trucks: 2, waste: 'landfill', nuisance: 0.2,
     budget: 'utilities', unlockPop: 0,
+  },
+  [Service.BusDepot]: {
+    name: 'Dépôt de bus', category: 'transport', description: 'Nécessaire pour exploiter des lignes de bus sur ce réseau routier (remisage et entretien des bus).',
+    cost: 5000, upkeep: 150, color: '#22c55e', budget: 'transport', unlockPop: 1200,
+  },
+  [Service.TramDepot]: {
+    name: 'Dépôt de tramway', category: 'transport', description: 'Nécessaire aux lignes de tram. Doit toucher une voie de tram.',
+    cost: 9000, upkeep: 250, color: '#f59e0b', budget: 'transport', unlockPop: 2500, needsTram: true,
+  },
+  [Service.MetroDepot]: {
+    name: 'Dépôt de métro', category: 'transport', description: 'Entretient les rames : sans dépôt, les lignes de métro n’ont que la moitié de leur capacité.',
+    cost: 12000, upkeep: 300, color: '#c026d3', budget: 'transport', unlockPop: 3000,
+  },
+  [Service.TrainStation]: {
+    name: 'Gare', category: 'transport', description: 'Gare de voyageurs et de fret. Doit toucher une voie ferrée. Reliée au bord de la carte : trains régionaux, touristes et fret.',
+    cost: 15000, upkeep: 320, color: '#0ea5e9', budget: 'transport', unlockPop: 2000, needsRail: true,
+  },
+  [Service.FerryPier]: {
+    name: 'Embarcadère', category: 'transport', description: 'Quai de ferry. Au bord de l’eau ; reliez deux quais par une ligne. Service suspendu par tempête.',
+    cost: 6000, upkeep: 120, color: '#38bdf8', budget: 'transport', unlockPop: 1500, nearWater: true,
+  },
+  [Service.TaxiDepot]: {
+    name: 'Station de taxis', category: 'transport', description: 'Flotte de 10 taxis : une partie des trajets se fait en taxi (licences : recette mensuelle).',
+    cost: 3000, upkeep: 60, color: '#facc15', budget: 'transport', unlockPop: 800,
+  },
+  [Service.BikeStation]: {
+    name: 'Vélos en libre-service', category: 'transport', description: 'Station de vélos partagés : plus de trajets courts à vélo autour (avec des pistes cyclables).',
+    cost: 1200, upkeep: 40, color: '#4ade80', budget: 'transport', unlockPop: 300, radius: 8,
+  },
+  [Service.Parking]: {
+    name: 'Parking', category: 'transport', description: '400 places à 6 cases. Près d’un arrêt de transport : parking relais.',
+    cost: 4500, upkeep: 80, color: '#64748b', budget: 'transport', unlockPop: 600, radius: 6,
+  },
+  [Service.Airport]: {
+    name: 'Aéroport', category: 'transport', description: 'Piste et terminal (5 × 3 cases) : touristes, affaires, fret aérien. Très bruyant.',
+    cost: 90000, upkeep: 2600, color: '#e2e8f0', budget: 'transport', unlockPop: 8000, footprint: [5, 3], nuisance: 0.25,
+  },
+  [Service.Harbor]: {
+    name: 'Port de commerce', category: 'transport', description: 'Quais et grues (3 × 2 cases) au bord de l’eau : exportations et stockage accrus.',
+    cost: 40000, upkeep: 900, color: '#0369a1', budget: 'transport', unlockPop: 3000, footprint: [3, 2], nearWater: true, nuisance: 0.15,
   },
 };
 

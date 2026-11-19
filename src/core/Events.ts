@@ -34,6 +34,7 @@ export interface GameEvents extends Record<string, unknown> {
   buildingsEvolved: { tiles: number[] };
   powerLinesChanged: void;
   districtsChanged: void;
+  railChanged: void;
   statsChanged: import('../sim/Simulation').CityStats;
   moneyChanged: number;
   dateChanged: { day: number; month: number; year: number };

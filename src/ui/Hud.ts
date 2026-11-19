@@ -18,6 +18,7 @@ import { BuildingSheet } from './BuildingSheet';
 import { NetworksPanel } from './NetworksPanel';
 import { DistrictPanel } from './DistrictPanel';
 import { CouncilPanel } from './CouncilPanel';
+import { TransportPanel } from './TransportPanel';
 import {
   COVERAGE_NAMES, COVERAGES, SERVICE_INFO, SERVICES, UTILITIES, UTILITY_COLORS, UTILITY_NAMES, UTILITY_SHORT, Utility, type Service,
 } from '../sim/services';
@@ -73,7 +74,11 @@ const TRANSPORT_TOOLS: ToolDef[] = [
   { id: 'busstop', label: 'Arrêt de bus', color: '#22c55e', sub: `${fmt(BUS_STOP_COST)} · sur une route`, unlock: BUS_UNLOCK, desc: 'Placez des arrêts sur les routes, puis reliez-les par une ligne.' },
   { id: 'busline', label: 'Ligne de bus', color: '#16a34a', sub: `${fmt(60)}/mois par bus`, unlock: BUS_UNLOCK, desc: "Cliquez sur les arrêts dans l'ordre, puis sur le premier pour fermer la boucle." },
   ...svcTools('transport'),
-  { id: 'metroline', label: 'Ligne de métro', color: '#c026d3', sub: `${fmt(400)}/mois`, unlock: 3000, desc: "Cliquez sur les stations dans l'ordre, puis sur la première pour fermer la boucle." },
+  { id: 'metroline', label: 'Ligne de métro', color: '#c026d3', sub: `${fmt(400)}/mois + rames`, unlock: 3000, desc: "Cliquez sur les stations dans l'ordre, puis sur la première pour fermer la boucle." },
+  { id: 'tramstop', label: 'Arrêt de tram', color: '#f8b26a', sub: `${fmt(600)} · sur une voie de tram`, unlock: 2500, desc: 'Posez d’abord des voies de tram (menu Routes), puis des arrêts et un dépôt.' },
+  { id: 'tramline', label: 'Ligne de tram', color: '#f59e0b', sub: `${fmt(180)}/mois par rame`, unlock: 2500, desc: "Cliquez sur les arrêts de tram dans l'ordre. Il faut un dépôt de tramway." },
+  { id: 'trainline', label: 'Ligne de train', color: '#0ea5e9', sub: `${fmt(320)}/mois par train`, unlock: 2000, desc: 'Cliquez sur les gares dans l’ordre (reliées par la voie ferrée).' },
+  { id: 'ferryline', label: 'Ligne de ferry', color: '#38bdf8', sub: `${fmt(200)}/mois par bateau`, unlock: 1500, desc: 'Cliquez sur les embarcadères dans l’ordre (reliés par l’eau).' },
 ];
 
 const GROUPS: Group[] = [
@@ -84,6 +89,13 @@ const GROUPS: Group[] = [
     { id: 'highway', label: 'Autoroute', color: ROAD_INFO[RoadType.Highway].color, sub: `${fmt(70)} / case · 110 km/h`, unlock: 600, desc: ROAD_INFO[RoadType.Highway].description },
     { id: 'pedestrian', label: 'Voie piétonne', color: ROAD_INFO[RoadType.Pedestrian].color, sub: `${fmt(20)} / case · sans voitures`, desc: ROAD_INFO[RoadType.Pedestrian].description },
     { id: 'oneway', label: 'Sens unique', color: '#f59e0b', sub: 'Glisser dans le sens voulu', desc: 'Glissez le long d\'une route dans le sens de circulation. Refaites pour revenir au double sens.' },
+    { id: 'rail', label: 'Voie ferrée', color: '#8b8073', sub: '45 € / case · ponts possibles', unlock: 2000, desc: 'Réseau ferré séparé des routes (passages à niveau). Gares sur le côté.' },
+    { id: 'tramtrack', label: 'Voie de tram', color: '#f59e0b', sub: '40 € / case · sur route', unlock: 2500, desc: 'Glissez le long d’une rue ou avenue. Refaire pour retirer.' },
+    { id: 'bikelane', label: 'Piste cyclable', color: '#3f8f5a', sub: '6 € / case · sur route', desc: 'Glissez le long des routes : plus de trajets courts à vélo.' },
+    { id: 'buslane', label: 'Voie de bus', color: '#9b4a3a', sub: '4 € / case · 2 voies min.', desc: 'Voie réservée aux bus, trams et secours : ils évitent les bouchons ; une voie de moins pour les voitures.' },
+    { id: 'zone30', label: 'Zone 30', color: '#d63a2f', sub: '2 € / case', desc: 'Vitesse réduite : moins de bruit et d’accidents.' },
+    { id: 'lanesUp', label: 'Ajouter une voie', color: '#e5e7eb', sub: '25 € / case', desc: 'Avenue : jusqu’à 3 voies par sens ; autoroute : jusqu’à 4. Plus de capacité.' },
+    { id: 'lanesDown', label: 'Retirer une voie', color: '#9ca3af', sub: 'gratuit', desc: 'Moins de voies : plus de place pour une voie de bus… ou moins de trafic.' },
     { id: 'lights', label: 'Feux tricolores', color: '#ef4444', sub: 'Clic sur un carrefour', desc: 'Ajoute ou retire des feux. Les carrefours d\'avenues en ont automatiquement.' },
   ] },
   { id: 'zones', label: 'Zones', icon: 'zone', tools: ZONE_TOOLS },
@@ -118,6 +130,7 @@ export class Hud {
   private el = (sel: string) => this.root.querySelector(sel) as HTMLElement;
   private openGroup: string | null = null;
   private districtPanel!: DistrictPanel;
+  private transportPanel!: TransportPanel;
   private lastTool: ToolId | null = null;
   private budget!: BudgetPanel;
   private advisor!: AdvisorPanel;
@@ -211,6 +224,8 @@ export class Hud {
     this.el('#flyout').addEventListener('click', (e) => {
       const b = (e.target as HTMLElement).closest('button');
       if (b?.dataset.roadmode) { tools.setRoadMode(b.dataset.roadmode as RoadMode); this.renderFlyout(); return; }
+      if (b?.dataset.structure) { tools.setStructure(b.dataset.structure as 'ground'); this.renderFlyout(); return; }
+      if (b?.dataset.lines) { this.transportPanel.toggle(true); return; }
       if (b?.dataset.lib) { this.libraryClick(b.dataset.lib, b.dataset.v!); return; }
       if (b?.dataset.tool) tools.setTool(b.dataset.tool as ToolId);
     });
@@ -230,6 +245,7 @@ export class Hud {
     this.budget = new BudgetPanel(root, sim);
     this.stats = new StatsPanel(root, sim);
     const networks = new NetworksPanel(root, sim);
+    this.transportPanel = new TransportPanel(root, sim);
     const council = new CouncilPanel(root, sim);
     this.el('#council-btn').addEventListener('click', () => council.toggle());
     this.districtPanel = new DistrictPanel(root, sim, tools);
@@ -335,8 +351,12 @@ export class Hud {
     if (!g) { fly.hidden = true; return; }
     fly.hidden = false;
     if (g.id === 'library') { fly.innerHTML = this.libraryHtml(); return; }
+    const st = this.sim.roadStructure;
     const modes = g.id === 'roads' ? `<div class="road-modes" role="group" aria-label="Tracé">${(Object.keys(ROAD_MODE_NAMES) as RoadMode[]).map((m) =>
-      `<button data-roadmode="${m}" class="${this.tools.roadMode === m ? 'active' : ''}" title="Touche C pour changer">${ROAD_MODE_NAMES[m]}</button>`).join('')}</div>` : '';
+      `<button data-roadmode="${m}" class="${this.tools.roadMode === m ? 'active' : ''}" title="Touche C pour changer">${ROAD_MODE_NAMES[m]}</button>`).join('')}</div>
+      <div class="road-modes" role="group" aria-label="Ouvrage">${([['ground', 'Au sol'], ['tunnel', 'Tunnel ×4'], ['elevated', 'Viaduc ×3']] as const).map(([k, l]) =>
+      `<button data-structure="${k}" class="${st === k ? 'active' : ''}" title="Tunnel : passe sous le relief et l’eau. Viaduc : sur piles. Ni l’un ni l’autre ne dessert les parcelles.">${l}</button>`).join('')}</div>`
+      : g.id === 'transport' ? '<div class="road-modes"><button data-lines="1">Gérer les lignes</button></div>' : '';
     fly.innerHTML = `<div class="fly-title">${g.label}${modes}</div>` + g.tools.map((t) => {
       const locked = t.zone ? !this.sim.isUnlocked(t.zone) : t.unlock ? this.sim.maxPop < t.unlock : false;
       const unlockAt = t.zone ? ZONE_INFO[t.zone].unlockPop : t.unlock ?? 0;
@@ -513,15 +533,19 @@ export class Hud {
     const [lo, hi] = w.tileMinMax(h.i, h.j);
     const zone = w.zones[idx] as ZoneId | 0;
     const state = w.bState[idx];
-    const svc = w.service[idx] as Service;
-    let kind = w.isRoad(h.i, h.j) ? 'Route' : w.terrainLabel(h.i, h.j);
+    const svc = (w.service[idx] || (w.annex[idx] ? w.service[w.annex[idx] - 1] : 0)) as Service;
+    let kind = w.isRoad(h.i, h.j) ? 'Route' : w.rail[idx] ? 'Voie ferrée' : w.terrainLabel(h.i, h.j);
     let extra = '';
     if (w.isRoad(h.i, h.j)) {
       const d = this.sim.traffic.density[idx];
       const info = ROAD_INFO[w.roadType[idx] as RoadType] ?? ROAD_INFO[RoadType.Street];
       kind = w.isWater(h.i, h.j) ? `Pont · ${info.name}` : info.name;
       const ow = w.oneway[idx];
-      extra = `${info.kmh ? `<dt>Vitesse</dt><dd>${info.kmh} km/h</dd>` : '<dt>Accès</dt><dd>Piétons uniquement</dd>'}
+      const fl = w.roadFlags[idx];
+      const feats = [fl & 1 ? 'tram' : '', fl & 2 ? 'piste cyclable' : '', fl & 4 ? 'voie de bus' : '', fl & 8 ? 'zone 30' : '', fl & 16 ? 'tunnel' : '', fl & 32 ? 'viaduc' : '', w.rail[idx] ? 'passage à niveau' : ''].filter(Boolean).join(', ');
+      extra = `${info.kmh ? `<dt>Vitesse</dt><dd>${fl & 8 ? 30 : info.kmh} km/h · ${Math.round(this.sim.traffic.speedAvg[idx] * 100)} % réelle</dd><dt>Voies</dt><dd>${w.lanesAt(idx)} par sens</dd>` : '<dt>Accès</dt><dd>Piétons uniquement</dd>'}
+        ${feats ? `<dt>Aménagements</dt><dd>${feats}</dd>` : ''}
+        ${w.incident[idx] ? `<dt>Incident</dt><dd class="bad">${w.incidentKind[idx] === 1 ? 'Accident' : 'Travaux'} (${w.incident[idx]} j)</dd>` : ''}
         ${ow ? `<dt>Sens</dt><dd>Unique (vers le ${DIR_NAMES[ow - 1]})</dd>` : ''}
         ${w.lights[idx] === 1 || w.lights[idx] === 2 ? '<dt>Carrefour</dt><dd>Feux tricolores</dd>' : ''}
         <dt>État</dt><dd class="${w.condition[idx] < 50 ? 'bad' : ''}">${Math.round(w.condition[idx])} %</dd>

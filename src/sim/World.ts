@@ -2,7 +2,7 @@ import { MAP_SIZE, MAX_ROAD_SLOPE, SEA_LEVEL } from '../config';
 import { fbm, rng } from '../core/noise';
 import { MAX_BUILD_SLOPE, ZONE_DEPTH } from './zones';
 import { SERVICE_INFO, type Service } from './services';
-import { BRIDGE_Y, DIRS8, RoadType, dirIndex } from './roads';
+import { BRIDGE_Y, DIRS8, LANES, RoadType, dirIndex } from './roads';
 
 export type MapType = 'river' | 'plain' | 'mountain' | 'valley' | 'coast' | 'island' | 'archipelago' | 'forest' | 'desert' | 'hills';
 
@@ -95,6 +95,17 @@ export class World {
   readonly powerLine: Uint8Array;
   /** Ressources naturelles du sous-sol et du sol (bits Resource), déduites du relief et de la graine. */
   readonly resources: Uint8Array;
+  /** Aménagements des routes (bits RoadFlag) et voies par sens (0 = selon la famille). */
+  readonly roadFlags: Uint8Array;
+  readonly lanes: Uint8Array;
+  /** Voie ferrée et ses liaisons (8 directions), séparées du réseau routier. */
+  readonly rail: Uint8Array;
+  readonly railLinks: Uint8Array;
+  /** Incident en cours sur une route (jours) : 1 = accident, 2 = travaux (dans incidentKind). */
+  readonly incident: Uint8Array;
+  readonly incidentKind: Uint8Array;
+  /** Case annexe d'un grand équipement : indice de la case principale + 1 (0 sinon). */
+  readonly annex: Int32Array;
   /** Quartier de chaque case (0 = aucun). */
   readonly district: Uint8Array;
   /** État des routes et équipements (0 à 100 %), baisse avec l'usure. */
@@ -136,6 +147,13 @@ export class World {
     this.powerLine = new Uint8Array(n * n);
     this.resources = new Uint8Array(n * n);
     this.district = new Uint8Array(n * n);
+    this.roadFlags = new Uint8Array(n * n);
+    this.lanes = new Uint8Array(n * n);
+    this.rail = new Uint8Array(n * n);
+    this.railLinks = new Uint8Array(n * n);
+    this.incident = new Uint8Array(n * n);
+    this.incidentKind = new Uint8Array(n * n);
+    this.annex = new Int32Array(n * n);
     this.condition = new Float32Array(n * n).fill(100);
     if (generate) { this.generate(); this.computeResources(); }
   }
@@ -148,7 +166,7 @@ export class World {
     let queue: number[] = [];
     // Les autoroutes ne desservent pas les parcelles
     for (let k = 0; k < n * n; k++) {
-      if (this.tiles[k] !== Tile.Road || this.roadType[k] === RoadType.Highway) continue;
+      if (this.tiles[k] !== Tile.Road || this.roadType[k] === RoadType.Highway || this.roadFlags[k] & 48) continue;
       dist[k] = 0;
       queue.push(k);
     }
@@ -173,7 +191,8 @@ export class World {
   zoneBlocker(i: number, j: number): string | null {
     if (!this.inBounds(i, j)) return 'Hors de la carte';
     if (this.isRoad(i, j)) return 'Case occupée par une route';
-    if (this.service[this.index(i, j)]) return 'Case occupée par un équipement';
+    if (this.service[this.index(i, j)] || this.annex[this.index(i, j)]) return 'Case occupée par un équipement';
+    if (this.rail[this.index(i, j)]) return 'Case occupée par une voie ferrée';
     if (this.isWater(i, j)) return "Impossible de zoner sur l'eau";
     const [lo, hi] = this.tileMinMax(i, j);
     if (hi - lo > MAX_BUILD_SLOPE) return 'Terrain trop pentu';
@@ -471,7 +490,7 @@ export class World {
   /** Raison pour laquelle on ne peut pas poser de route, ou null si c'est possible. */
   roadBlocker(i: number, j: number): string | null {
     if (!this.inBounds(i, j)) return 'Hors de la carte';
-    if (this.service[this.index(i, j)]) return 'Case occupée par un équipement';
+    if (this.service[this.index(i, j)] || this.annex[this.index(i, j)]) return 'Case occupée par un équipement';
     if (this.isWater(i, j)) {
       const [lo] = this.tileMinMax(i, j);
       return lo < -2.2 ? 'Eau trop profonde pour un pont' : null;
@@ -530,9 +549,58 @@ export class World {
     }
   }
 
-  /** Hauteur de la chaussée : suit le relief, mais reste au-dessus de l'eau (ponts). */
+  /** Hauteur de la chaussée : suit le relief, reste au-dessus de l'eau (ponts), monte (viaduc) ou passe dessous (tunnel). */
   roadY(x: number, z: number): number {
-    return Math.max(this.heightAt(x, z), BRIDGE_Y);
+    return Math.max(this.heightAt(x, z), BRIDGE_Y) + this.roadOffset(x, z);
+  }
+
+  /** Décalage vertical lissé entre cases (rampes des tunnels et viaducs). */
+  roadOffset(x: number, z: number): number {
+    const n = this.size;
+    const fx = x - 0.5, fz = z - 0.5;
+    const i0 = Math.floor(fx), j0 = Math.floor(fz);
+    const tx = fx - i0, tz = fz - j0;
+    const v = (i: number, j: number) => {
+      if (i < 0 || j < 0 || i >= n || j >= n) return 0;
+      const f = this.roadFlags[j * n + i];
+      return f & 32 ? 0.9 : f & 16 ? -0.95 : 0;
+    };
+    const a = v(i0, j0), b = v(i0 + 1, j0), c = v(i0, j0 + 1), d = v(i0 + 1, j0 + 1);
+    if (!a && !b && !c && !d) return 0;
+    // Interpolation entre centres de cases : pleine hauteur au centre, rampe vers les voisines
+    return a * (1 - tx) * (1 - tz) + b * tx * (1 - tz) + c * (1 - tx) * tz + d * tx * tz;
+  }
+
+  /** Voies par sens d'une case de route. */
+  lanesAt(k: number): number {
+    const t = (this.roadType[k] || 1) as RoadType;
+    return this.lanes[k] || LANES[t][0];
+  }
+
+  /** Relie deux cases de voie ferrée voisines. */
+  connectRail(a: number, b: number): void {
+    const n = this.size;
+    const ai = a % n, bi = b % n;
+    const d = dirIndex(bi - ai, (b - bi) / n - (a - ai) / n);
+    if (d < 0) return;
+    this.railLinks[a] |= 1 << d;
+    this.railLinks[b] |= 1 << ((d + 4) % 8);
+  }
+
+  disconnectRail(k: number): void {
+    const n = this.size, i = k % n, j = (k - i) / n;
+    for (let d = 0; d < 8; d++) {
+      if (!(this.railLinks[k] & (1 << d))) continue;
+      const a = i + DIRS8[d][0], b = j + DIRS8[d][1];
+      if (this.inBounds(a, b)) this.railLinks[b * n + a] &= ~(1 << ((d + 4) % 8));
+    }
+    this.railLinks[k] = 0;
+  }
+
+  railNeighbors(k: number): number[] {
+    const n = this.size, out: number[] = [], i = k % n, j = (k - i) / n, l = this.railLinks[k];
+    for (let d = 0; d < 8; d++) if (l & (1 << d)) out.push((j + DIRS8[d][1]) * n + i + DIRS8[d][0]);
+    return out;
   }
 
   isBridge(i: number, j: number): boolean {
@@ -549,7 +617,8 @@ export class World {
     if (!this.inBounds(i, j)) return 'Hors de la carte';
     const idx = this.index(i, j);
     if (this.isRoad(i, j)) return 'Case occupée par une route';
-    if (this.service[idx]) return 'Case occupée par un équipement';
+    if (this.service[idx] || this.annex[idx]) return 'Case occupée par un équipement';
+    if (this.rail[idx]) return 'Case occupée par une voie ferrée';
     if (this.isWater(i, j)) return "Impossible de construire sur l'eau";
     const [lo, hi] = this.tileMinMax(i, j);
     if (hi - lo > MAX_BUILD_SLOPE) return 'Terrain trop pentu';

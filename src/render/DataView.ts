@@ -6,10 +6,13 @@ import { Overlay } from './Overlay';
 
 export type ViewMode =
   | 'none' | 'traffic' | 'power' | 'water' | 'sewage' | 'garbage'
-  | 'health' | 'education' | 'police' | 'fire' | 'park' | 'happiness' | 'land' | 'transport' | 'air' | 'noise' | 'crime' | 'waterPol' | 'soil' | 'light' | 'damage' | 'risk' | 'rent' | 'occupancy' | 'resources' | 'condition' | 'districts';
+  | 'health' | 'education' | 'police' | 'fire' | 'park' | 'happiness' | 'land' | 'transport' | 'air' | 'noise' | 'crime' | 'waterPol' | 'soil' | 'light' | 'damage' | 'risk' | 'rent' | 'occupancy' | 'resources' | 'condition' | 'districts' | 'speed' | 'volume' | 'parking';
 
 export const VIEW_LABELS: Array<[ViewMode, string]> = [
-  ['traffic', 'Trafic'],
+  ['traffic', 'Trafic (densité)'],
+  ['speed', 'Trafic (vitesse moyenne)'],
+  ['volume', 'Trafic (volume)'],
+  ['parking', 'Stationnement'],
   ['transport', 'Transports'],
   ['power', 'Électricité'],
   ['water', 'Eau'],
@@ -75,6 +78,9 @@ const LEGENDS: Record<Exclude<ViewMode, 'none'>, Legend> = {
   water: { title: 'Eau potable', unit: 'raccordement, pression et qualité', items: [['#ffffff', 'Pompage, traitement, château d’eau'], ['#22c55e', 'Alimenté'], ['#facc15', 'Basse pression'], ['#a855f7', 'Eau contaminée'], ['#ef4444', 'Sans eau']], explanation: 'Captage, traitement, stockage puis distribution : chaque étape limite le débit. Loin d’une station ou d’un château d’eau, la pression baisse.' },
   sewage: { title: 'Égouts', unit: 'raccordement', items: [['#ffffff', 'Station d’épuration'], ['#22c55e', 'Raccordé'], ['#ef4444', 'Non raccordé']], explanation: 'Sans épuration, les immeubles ne peuvent pas passer au niveau 3.' },
   garbage: { title: 'Déchets', unit: 'jours d’accumulation', items: [['#ffffff', 'Centre de traitement ou dépôt'], ['#22c55e', 'Collecté récemment'], ['#facc15', '5 à 10 jours'], ['#f97316', 'Plus de 10 jours'], ['#ef4444', 'Plus de 20 jours']], explanation: 'Les camions partent des centres et collectent autour des quartiers les plus chargés. Les déchets accumulés réduisent le bonheur.' },
+  speed: { title: 'Vitesse moyenne', unit: 'part de la vitesse normale', items: [['#22c55e', '> 80 %'], ['#a3e635', '60 à 80 %'], ['#facc15', '40 à 60 %'], ['#f97316', '20 à 40 %'], ['#ef4444', '< 20 % (arrêt)']], explanation: 'Vitesse réelle des véhicules sur chaque route : feux, bouchons, accidents, travaux, zones 30. Les cases en orange et rouge allongent les temps de trajet.' },
+  volume: { title: 'Volume de trafic', unit: 'passages récents par case', items: [['#dbeafe', 'Faible'], ['#93c5fd', 'Moyen'], ['#3b82f6', 'Fort'], ['#1d4ed8', 'Très fort'], ['#a855f7', 'Accident ou travaux']], explanation: 'Nombre de véhicules passés récemment sur chaque case : les grands axes ressortent. Différent de la densité : une autoroute fluide a un gros volume et une faible densité.' },
+  parking: { title: 'Stationnement', unit: 'demande / places disponibles', items: [['#22c55e', 'Places suffisantes'], ['#facc15', 'Presque saturé'], ['#f97316', 'Saturé'], ['#ef4444', 'Très saturé (ventes en baisse)'], ['#64748b', 'Parking']], explanation: 'Places sur voirie (rues proches) et parkings, comparées aux besoins des employés et des clients des commerces et bureaux. Un parking près d’un arrêt devient un parking relais.' },
   condition: { title: 'État du patrimoine', unit: '0 à 100 %', items: [['#22c55e', 'Bon (> 75 %)'], ['#a3e635', 'Correct'], ['#facc15', 'Usé (< 50 %) : ralentit'], ['#f97316', 'Très usé'], ['#ef4444', 'Hors d’usage (< 20 %) : pannes']], explanation: 'Le trafic use les routes, le temps use les équipements. Le budget « Entretien du patrimoine » compense l’usure ; sous 50 %, les routes ralentissent et les équipements produisent moins.' },
   districts: { title: 'Quartiers', unit: 'limites et politiques', items: [['#ffffff', 'Chaque couleur est un quartier']], explanation: 'Tracez les quartiers avec le menu Quartiers, puis appliquez-leur des politiques et des impôts locaux.' },
   resources: { title: 'Ressources naturelles', unit: 'terres et gisements', items: [['#a3a33a', 'Terres fertiles (agriculture ×1,3)'], ['#78716c', 'Gisement de minerai (extraction)'], ['#166534', 'Forêt (sylviculture)']], explanation: 'Zonez l’agriculture sur les terres fertiles, l’extraction sur les gisements et la sylviculture près des forêts. Le potentiel éolien, solaire et hydraulique est dans le panneau Réseaux.' },
@@ -170,6 +176,13 @@ export class DataView {
       const built = w.bState[idx] === BuildState.Built;
       if (m === 'traffic') {
         if (w.tiles[idx] === 1) add(TRAFFIC_LEVELS.find(([max]) => this.sim.traffic.density[idx] < max)![1], idx);
+      } else if (m === 'speed') {
+        if (w.tiles[idx] === 1) { const v = this.sim.traffic.speedAvg[idx]; add(v > 0.8 ? '#22c55e' : v > 0.6 ? '#a3e635' : v > 0.4 ? '#facc15' : v > 0.2 ? '#f97316' : '#ef4444', idx); }
+      } else if (m === 'volume') {
+        if (w.tiles[idx] === 1) { const v = this.sim.traffic.volume[idx]; if (w.incident[idx]) add('#a855f7', idx); else if (v > 0.5) add(v > 60 ? '#1d4ed8' : v > 25 ? '#3b82f6' : v > 8 ? '#93c5fd' : '#dbeafe', idx); }
+      } else if (m === 'parking') {
+        if (w.service[idx] === Service.Parking) add('#64748b', idx);
+        else { const p = this.sim.parkingPressure[idx] ?? 0; if (p > 0) add(p < 0.7 ? '#22c55e' : p < 1 ? '#facc15' : p < 1.6 ? '#f97316' : '#ef4444', idx); }
       } else if (m === 'condition') {
         if (w.tiles[idx] === 1 || w.service[idx]) { const c = w.condition[idx]; add(c > 75 ? '#22c55e' : c > 60 ? '#a3e635' : c > 40 ? '#facc15' : c > 20 ? '#f97316' : '#ef4444', idx); }
       } else if (m === 'districts') {

@@ -319,11 +319,12 @@ export class Society {
     const goodsLocal = Math.min(goodsSupply, manufDemand);
     const goodsImport = manufDemand - goodsLocal;
     // Exportations limitées par la logistique ; le reste est stocké, puis invendu
-    const exportCap = 150000 + produced * 0.4 + logistics * 15000;
+    const fb = sim.freightBonus();
+    const exportCap = 150000 + produced * 0.4 + logistics * 15000 + fb.export;
     const goodsSurplus = goodsSupply - goodsLocal, rawSurplus = rawSupply - rawLocal;
     const goodsExport = Math.min(goodsSurplus, exportCap);
     const rawExport = Math.min(rawSurplus, exportCap - goodsExport);
-    const storageCap = 80000 + logistics * 5000;
+    const storageCap = 80000 + logistics * 5000 + fb.storage;
     const goodsStock = Math.min(goodsSurplus - goodsExport, storageCap);
     const rawStock = Math.min(rawSurplus - rawExport, storageCap - goodsStock);
     const unsold = goodsSurplus - goodsExport - goodsStock + rawSurplus - rawExport - rawStock;
@@ -365,7 +366,7 @@ export class Society {
       } else if (jobKind(z) === Zone.Commercial) {
         // Part des achats des ménages selon la taille et l'attrait du commerce, limitée par son personnel
         const share = wC ? spending * (sim.jobCapacity(k) * (0.7 + lv * 0.6) * (z === Zone.CommercialDense ? 1.15 : 1)) / wC : 0;
-        rev = Math.min(share, c.employees[k] * SALES_PER_EMPLOYEE) * sim.districts.commerceFactor(k) * (1 + sim.council.mod('commerce'));
+        rev = Math.min(share, c.employees[k] * SALES_PER_EMPLOYEE) * sim.districts.commerceFactor(k) * (1 + sim.council.mod('commerce')) * sim.parkingFactor(k);
         this.target[k] = Math.max(1, Math.min(slotsAll, Math.ceil(share / SALES_PER_EMPLOYEE)));
         goods = rev * GOODS_SHARE * (1 + (goodsDemand ? imports / goodsDemand : 0) * 0.15);
       } else if (z === Zone.Industrial) {

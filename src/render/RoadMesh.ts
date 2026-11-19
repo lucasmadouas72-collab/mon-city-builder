@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { World } from '../sim/World';
-import { DIRS8, RoadType } from '../sim/roads';
+import { DIRS8, RoadFlag, RoadType } from '../sim/roads';
 
 const C = (h: string) => new THREE.Color(h);
 const ASPHALT = C('#41454c');
@@ -15,6 +15,14 @@ const PAVING = C('#cdbf9f');
 const PAVING_2 = C('#bfae8a');
 const PILLAR = C('#a8a49a');
 const RAIL = C('#8a8f96');
+const TRAM_RAIL = C('#6b7078');
+const BIKE = C('#3f8f5a');
+const BUS_LANE = C('#9b4a3a');
+const RED = C('#d63a2f');
+const CONCRETE = C('#9c988e');
+
+/** Centre de la voie (décalage depuis l'axe) — même formule que les véhicules. */
+const laneCenter = (lanes: number, idx: number) => (lanes <= 1 ? 0.17 : 0.08 + (idx / Math.max(1, lanes - 1)) * (lanes >= 3 ? 0.24 : 0.18));
 
 const Y_ROAD = 0.035;
 const Y_WALK = 0.075;
@@ -121,7 +129,7 @@ export class RoadMesh {
     const w = this.world;
     const nb = w.neighbors(t);
     if (nb.length !== 2) return true;
-    return nb.some((q) => w.roadType[q] !== w.roadType[t]);
+    return nb.some((q) => w.roadType[q] !== w.roadType[t] || (w.roadFlags[q] & 15) !== (w.roadFlags[t] & 15) || w.lanesAt(q) !== w.lanesAt(t));
   }
 
   /** Chaînes de cases entre deux nœuds. */
@@ -219,7 +227,7 @@ export class RoadMesh {
       this.band(S, 0.38, 0.4, Y_MARK, MARK, outside);
       this.band(S, -0.4, -0.38, Y_MARK, MARK, outside);
       if (!oneway) this.band(S, -0.018, 0.018, Y_WALK, BARRIER, outside);
-      for (const o of oneway ? [-0.2, 0, 0.2] : [-0.24, 0.24]) this.band(S, o - 0.012, o + 0.012, Y_MARK, MARK, (s) => outside(s) && Math.floor(s.s * 2.5) % 2 === 0);
+      this.laneMarks(S, chain, outside, 2.5);
     } else {
       this.band(S, -0.5, 0.5, Y_ROAD, type === RoadType.Avenue ? ASPHALT_DARK : ASPHALT);
       // Trottoirs et bordures (interrompus aux carrefours)
@@ -229,13 +237,47 @@ export class RoadMesh {
       this.band(S, -0.34, -0.32, Y_WALK, CURB, outside);
       if (type === RoadType.Avenue && !oneway) this.band(S, -0.045, 0.045, Y_WALK, MEDIAN, outside);
       else if (!oneway) this.band(S, -0.022, 0.022, Y_MARK, MARK, (s) => outside(s) && Math.floor(s.s * 4) % 2 === 0);
+      this.laneMarks(S, chain, outside, 4);
     }
+    this.flagMarks(S, chain, outside, type);
 
     // Ponts : tablier épais et garde-corps au-dessus de l'eau
     const water = (s: Sample) => s.water;
     if (S.some(water)) {
       this.wall(S, 0.5, -0.12, Y_WALK + 0.1, RAIL, water);
       this.wall(S, -0.5, -0.12, Y_WALK + 0.1, RAIL, water);
+    }
+  }
+
+  /** Séparateurs entre voies d'un même sens. */
+  private laneMarks(S: Sample[], chain: number[], outside: (s: Sample) => boolean, freq: number): void {
+    const w = this.world;
+    const lanes = w.lanesAt(chain[Math.floor(chain.length / 2)]);
+    if (lanes < 2) return;
+    for (let k = 0; k < lanes - 1; k++) {
+      const o = (laneCenter(lanes, k) + laneCenter(lanes, k + 1)) / 2;
+      for (const sgn of [1, -1]) this.band(S, sgn * o - 0.01, sgn * o + 0.01, Y_MARK, MARK, (s) => outside(s) && Math.floor(s.s * freq) % 2 === 0);
+    }
+  }
+
+  /** Voies de tram, pistes cyclables, voies de bus, zone 30. */
+  private flagMarks(S: Sample[], chain: number[], outside: (s: Sample) => boolean, type: RoadType): void {
+    const w = this.world;
+    const t = chain[Math.floor(chain.length / 2)];
+    const f = w.roadFlags[t];
+    if (!(f & 15)) return;
+    const lanes = w.lanesAt(t);
+    const outer = laneCenter(lanes, Math.max(0, lanes - 1));
+    if (f & RoadFlag.BusLane) for (const sgn of [1, -1]) this.band(S, sgn * outer - 0.065, sgn * outer + 0.065, Y_MARK - 0.004, BUS_LANE, outside);
+    if (f & RoadFlag.Bike) {
+      const edge = type === RoadType.Highway ? 0.4 : 0.3;
+      for (const sgn of [1, -1]) this.band(S, sgn * edge - 0.03, sgn * edge + 0.03, Y_MARK, BIKE, outside);
+    }
+    if (f & RoadFlag.Tram) for (const sgn of [1, -1]) for (const r of [-0.04, 0.04]) this.band(S, sgn * outer + r - 0.008, sgn * outer + r + 0.008, Y_MARK + 0.003, TRAM_RAIL);
+    if (f & RoadFlag.Zone30 && S.length > 4) {
+      const m = S[Math.floor(S.length / 2)];
+      this.disc(m.x, m.z, 0.12, Y_MARK + 0.004, RED, 14);
+      this.disc(m.x, m.z, 0.085, Y_MARK + 0.006, MARK, 14);
     }
   }
 
@@ -297,8 +339,29 @@ export class RoadMesh {
       if (w.tiles[t] !== 1) continue;
       if (this.isNode(t)) this.buildNode(t);
       if (w.oneway[t]) this.arrow(t);
-      // Piles de pont
+      // Piles de pont et de viaduc, entrées de tunnel
       const i = t % w.size, j = Math.floor(t / w.size);
+      if (w.roadFlags[t] & RoadFlag.Elevated && (i + j) % 2 === 0) {
+        const y = w.roadY(i + 0.5, j + 0.5);
+        this.box(i + 0.4, w.heightAt(i + 0.5, j + 0.5) - 0.3, j + 0.4, i + 0.6, y - 0.02, j + 0.6, PILLAR);
+      }
+      if (w.roadFlags[t] & RoadFlag.Tunnel) {
+        for (const q of w.neighbors(t)) {
+          if (w.roadFlags[q] & RoadFlag.Tunnel) continue;
+          const [qx, qz] = this.center(q), [cx, cz] = this.center(t);
+          const alongX = Math.abs(qx - cx) > 0.1, alongZ = Math.abs(qz - cz) > 0.1;
+          if (alongX && alongZ) continue; // entrée en diagonale : pas de portail dessiné
+          // Portail : deux piédroits et un linteau, côté tunnel de la jonction
+          const px = cx + (qx - cx) * 0.2, pz = cz + (qz - cz) * 0.2;
+          const ry = w.roadY(px, pz), top = Math.max(ry + 0.34, w.heightAt(px, pz) + 0.05);
+          const B = (l0: number, l1: number, y0: number, y1: number) => alongX
+            ? this.box(px - 0.06, y0, pz + l0, px + 0.06, y1, pz + l1, CONCRETE)
+            : this.box(px + l0, y0, pz - 0.06, px + l1, y1, pz + 0.06, CONCRETE);
+          B(-0.56, -0.44, ry - 0.1, top);
+          B(0.44, 0.56, ry - 0.1, top);
+          B(-0.56, 0.56, ry + 0.26, top + 0.04);
+        }
+      }
       if (w.isWater(i, j) && (i + j) % 2 === 0) {
         const y = w.roadY(i + 0.5, j + 0.5);
         this.box(i + 0.42, Math.min(w.heightAt(i + 0.5, j + 0.5), -0.2), j + 0.42, i + 0.58, y - 0.1, j + 0.58, PILLAR);

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import type { Transit } from '../sim/Transit';
+import type { Transit, TransitKind, TransitLine } from '../sim/Transit';
+import { BRIDGE_Y } from '../sim/roads';
 import type { World } from '../sim/World';
 
 const RIBBON_W = 0.07;
@@ -11,6 +12,10 @@ export class TransitView {
   private lines = new THREE.Group();
   private draft = new THREE.Group();
   private _visible = false;
+  private movers = new THREE.Group();
+  private fleet: Array<{ line: TransitLine; parts: THREE.Mesh[]; cum: number[]; pts: THREE.Vector3[]; total: number; offset: number; speed: number; ferry: boolean }> = [];
+  private matTrain = new THREE.MeshStandardMaterial({ color: '#e5e7eb', roughness: 0.5, metalness: 0.3 });
+  private matFerry = new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.6 });
 
   constructor(private world: World, private transit: Transit) {
     const B = THREE.BoxGeometry;
@@ -35,7 +40,7 @@ export class TransitView {
     this.stops.castShadow = true;
     this.stops.frustumCulled = false;
     this.lines.visible = false;
-    this.group.add(this.stops, this.lines, this.draft);
+    this.group.add(this.stops, this.lines, this.draft, this.movers);
     this.rebuild();
   }
 
@@ -97,27 +102,88 @@ export class TransitView {
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     let n = 0;
+    const tint = new THREE.Color();
     for (let idx = 0; idx < w.busStop.length && n < 2048; idx++) {
       if (!w.busStop[idx]) continue;
       const i = idx % w.size, j = Math.floor(idx / w.size);
       const x = i + 0.88, z = j + 0.88;
       q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), w.isRoad(i + 1, j) || w.isRoad(i - 1, j) ? 0 : Math.PI / 2);
-      this.stops.setMatrixAt(n++, m.compose(new THREE.Vector3(x, w.heightAt(x, z) + 0.07, z), q, new THREE.Vector3(1, 1, 1)));
+      const tram = w.busStop[idx] === 2;
+      this.stops.setMatrixAt(n, m.compose(new THREE.Vector3(x, w.heightAt(x, z) + 0.07, z), q, new THREE.Vector3(tram ? 1.6 : 1, 1, tram ? 1.3 : 1)));
+      this.stops.setColorAt(n++, tint.set(tram ? '#f8b26a' : '#ffffff'));
     }
     this.stops.count = n;
     this.stops.instanceMatrix.needsUpdate = true;
+    if (this.stops.instanceColor) this.stops.instanceColor.needsUpdate = true;
 
     // Lignes
     this.lines.children.forEach((c) => (c as THREE.Mesh).geometry.dispose());
     this.lines.clear();
     for (const line of this.transit.lines) {
-      if (line.kind === 'bus' && line.path.length > 1) this.lines.add(this.ribbon(this.tilePoints(line.path, true), line.color));
+      if ((line.kind === 'bus' || line.kind === 'tram') && line.path.length > 1) this.lines.add(this.ribbon(this.tilePoints(line.path, true), line.color, false, line.kind === 'tram' ? 0.2 : 0.16));
       if (line.kind === 'metro') this.lines.add(this.ribbon(this.tilePoints(line.stops, true), line.color, true, 0.35));
+      if ((line.kind === 'train' || line.kind === 'ferry') && line.path.length > 1) this.lines.add(this.ribbon(this.tilePoints(line.path, true), line.color, line.kind === 'ferry', 0.25));
+    }
+    this.buildFleet();
+  }
+
+  /** Trains et ferries : rames et bateaux qui parcourent leur ligne. */
+  private buildFleet(): void {
+    const w = this.world;
+    this.movers.children.forEach((c) => (c as THREE.Mesh).geometry.dispose());
+    this.movers.clear();
+    this.fleet = [];
+    for (const line of this.transit.lines) {
+      if ((line.kind !== 'train' && line.kind !== 'ferry') || line.broken || line.path.length < 2) continue;
+      const ferry = line.kind === 'ferry';
+      const pts = [...line.path, line.path[0]].map((t) => {
+        const i = t % w.size, j = Math.floor(t / w.size);
+        return new THREE.Vector3(i + 0.5, ferry ? 0.06 : Math.max(w.heightAt(i + 0.5, j + 0.5), BRIDGE_Y) + 0.07, j + 0.5);
+      });
+      const cum = [0];
+      for (let k = 1; k < pts.length; k++) cum.push(cum[k - 1] + pts[k].distanceTo(pts[k - 1]));
+      const total = cum[cum.length - 1];
+      for (let v = 0; v < line.vehicles; v++) {
+        const parts: THREE.Mesh[] = [];
+        const cars = ferry ? 1 : 3;
+        for (let c = 0; c < cars; c++) {
+          const geo = ferry ? new THREE.BoxGeometry(0.22, 0.12, 0.55) : new THREE.BoxGeometry(0.16, 0.13, 0.42);
+          const mesh = new THREE.Mesh(geo, ferry ? this.matFerry : this.matTrain);
+          mesh.castShadow = true;
+          const band = new THREE.Mesh(ferry ? new THREE.BoxGeometry(0.23, 0.03, 0.4) : new THREE.BoxGeometry(0.165, 0.035, 0.43), new THREE.MeshStandardMaterial({ color: line.color }));
+          band.position.y = ferry ? 0.08 : 0.01;
+          mesh.add(band);
+          parts.push(mesh);
+          this.movers.add(mesh);
+        }
+        this.fleet.push({ line, parts, cum, pts, total, offset: (v / line.vehicles) * total, speed: ferry ? 1.1 : 2.6, ferry });
+      }
+    }
+  }
+
+  private at(f: { cum: number[]; pts: THREE.Vector3[]; total: number }, s: number): [THREE.Vector3, number] {
+    s = ((s % f.total) + f.total) % f.total;
+    let lo = 0, hi = f.cum.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (f.cum[mid] <= s) lo = mid; else hi = mid; }
+    const a = f.pts[lo], b = f.pts[hi], t = (s - f.cum[lo]) / Math.max(1e-6, f.cum[hi] - f.cum[lo]);
+    return [a.clone().lerp(b, t), Math.atan2(b.x - a.x, b.z - a.z)];
+  }
+
+  /** Avance les trains et ferries (temps de simulation). */
+  update(): void {
+    for (const f of this.fleet) {
+      const clock = f.ferry ? this.transit.ferryClock : this.transit.clock;
+      const head = clock * f.speed + f.offset;
+      f.parts.forEach((m, c) => {
+        const [p, ang] = this.at(f, head - c * 0.46);
+        m.position.copy(p);
+        m.rotation.y = ang;
+      });
     }
   }
 
   /** Aperçu de la ligne en cours de tracé. */
-  setDraft(kind: 'bus' | 'metro' | null, tiles: number[]): void {
+  setDraft(kind: TransitKind | null, tiles: number[]): void {
     this.draft.children.forEach((c) => (c as THREE.Mesh).geometry.dispose());
     this.draft.clear();
     if (!kind || tiles.length < 2) return;
