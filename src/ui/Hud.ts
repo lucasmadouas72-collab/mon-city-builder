@@ -1,6 +1,7 @@
 import { GAME_NAME } from '../config';
 import { BudgetPanel } from './BudgetPanel';
 import { BUS_STOP_COST, BUS_UNLOCK, MILESTONES } from '../sim/economy';
+import { SEASON_NAMES, WEATHER_NAMES } from '../sim/Environment';
 import { fmt, type HoverInfo, type ToolId, type ToolManager, type Tooltip } from '../input/ToolManager';
 import type { CityStats, Simulation } from '../sim/Simulation';
 import { TrafficView } from '../render/TrafficView';
@@ -95,7 +96,7 @@ export class Hud {
             ${VIEW_LABELS.map(([m, l]) => `<button data-view="${m}">${l}</button>`).join('')}
           </div>
         </div>
-        <div class="date" id="date"></div>
+        <div class="clock"><div class="date" id="date"></div><div class="weather" id="weather"></div></div>
         <div class="speeds" id="speeds">
           ${['pause', 'play1', 'play2', 'play3'].map((n, k) => `<button data-speed="${k}" title="${k === 0 ? 'Pause (Espace)' : `Vitesse ${k}`}">${icon(n)}</button>`).join('')}
         </div>
@@ -154,7 +155,7 @@ export class Hud {
       this.el('#ms-text').innerHTML = `Votre ville atteint ${ms.pop.toLocaleString('fr-FR')} habitants.<br>Débloqué : <b>${ms.unlocks}</b>.<br>Subvention : <b>+${fmt(ms.reward)}</b>.`;
       this.el('#ms-popup').hidden = false;
     });
-    setInterval(() => this.updateTraffic(), 500);
+    setInterval(() => { this.updateTraffic(); this.updateDate(); }, 500);
 
     let lastSpeed = 1;
     window.addEventListener('keydown', (e) => {
@@ -283,7 +284,10 @@ export class Hud {
 
   private updateDate(): void {
     const d = this.sim.date;
-    this.el('#date').textContent = `${d.day} ${MONTHS[d.month]} an ${d.year}`;
+    const env = this.sim.env;
+    const hh = Math.floor(env.hour), mm = Math.floor((env.hour - hh) * 6) * 10;
+    this.el('#date').textContent = `${d.day} ${MONTHS[d.month]} an ${d.year} · ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+    this.el('#weather').textContent = `${SEASON_NAMES[env.season(this.sim.monthIndex)]} · ${WEATHER_NAMES[env.weather]} · ${env.temperature(this.sim.monthIndex)} °C`;
   }
 
   private updateSpeed(): void {

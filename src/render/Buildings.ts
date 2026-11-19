@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { E, N, W, type World } from '../sim/World';
 import { BuildState } from '../sim/zones';
 import { createModels, type ModelSet } from './buildingModels';
+import { patchEnv } from './envMaterials';
 
 interface Slot {
   mesh: THREE.InstancedMesh;
@@ -31,7 +32,7 @@ export class Buildings {
 
   constructor(private world: World) {
     this.models = createModels();
-    this.material = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.8, metalness: 0.05, side: THREE.DoubleSide });
+    this.material = patchEnv(new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.8, metalness: 0.05, side: THREE.DoubleSide }), { windows: true, snow: true });
   }
 
   /** Signale des cases modifiées (pour les animer à la prochaine reconstruction). */

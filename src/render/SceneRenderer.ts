@@ -39,9 +39,11 @@ export class SceneRenderer {
   readonly zoneOverlay: Overlay;
   readonly buildings: Buildings;
   private zoneColors = new Map<number, THREE.Color>();
-  private water: ReturnType<typeof createWater>;
-  private sun: THREE.DirectionalLight;
-  private sky: THREE.Mesh;
+  water: ReturnType<typeof createWater>;
+  readonly sun: THREE.DirectionalLight;
+  readonly sky: THREE.Mesh;
+  readonly hemi: THREE.HemisphereLight;
+  readonly ground: THREE.Mesh;
 
   constructor(container: HTMLElement, world: World) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -62,7 +64,8 @@ export class SceneRenderer {
     this.scene.add(this.sky);
 
     // Lumières
-    this.scene.add(new THREE.HemisphereLight('#dceeff', '#6f6a55', 1.1));
+    this.hemi = new THREE.HemisphereLight('#dceeff', '#6f6a55', 1.1);
+    this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight('#fff3dd', 2.4);
     this.sun.position.set(n / 2 - 60, 90, n / 2 - 40);
     this.sun.target.position.set(n / 2, 0, n / 2);
@@ -87,7 +90,7 @@ export class SceneRenderer {
     this.refreshZones(world);
 
     // Sol lointain sous la maquette
-    const ground = new THREE.Mesh(
+    const ground = this.ground = new THREE.Mesh(
       new THREE.CircleGeometry(1200, 48).rotateX(-Math.PI / 2),
       new THREE.MeshStandardMaterial({ color: '#d9e2e4', roughness: 1 }),
     );

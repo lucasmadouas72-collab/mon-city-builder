@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rng } from '../core/noise';
 import type { World } from '../sim/World';
+import { patchEnv } from './envMaterials';
 
 function colored(geo: THREE.BufferGeometry, color: string): THREE.BufferGeometry {
   const g = geo.index ? geo.toNonIndexed() : geo;
@@ -29,13 +30,21 @@ function broadleaf(): THREE.BufferGeometry {
 
 const MAX_TREES = 40_000;
 
+/** Couleurs des conifères et feuillus selon la saison (printemps, été, automne, hiver). */
+const SEASON_PALETTES: string[][][] = [
+  [['#2f6b3a', '#3b7d44', '#28603a', '#447f3c'], ['#7cc04a', '#8fd05a', '#6db53f', '#f2b5c8', '#a6d66a']],
+  [['#2f6b3a', '#3b7d44', '#28603a', '#447f3c'], ['#5d9b3c', '#6fa842', '#4f8d36', '#83b14a', '#9bb54a']],
+  [['#2f6638', '#3a7442', '#2a5e38', '#406f3a'], ['#d9822b', '#c2462a', '#e8b03a', '#a8572a', '#d96a2b', '#9bb54a']],
+  [['#4f7a5a', '#5d8566', '#46705a', '#6a8a70'], ['#8a7a6a', '#7d6e60', '#998a7a', '#6f6255']],
+];
+
 /** Arbres instanciés (deux essences), régénérés quand la forêt change. */
 export class Trees {
   readonly group = new THREE.Group();
   private kinds: THREE.InstancedMesh[];
 
   constructor(private world: World) {
-    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.9 });
+    const mat = patchEnv(new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.9 }), { snow: true });
     this.kinds = [conifer(), broadleaf()].map((geo) => {
       const m = new THREE.InstancedMesh(geo, mat, MAX_TREES);
       m.castShadow = true;
@@ -47,6 +56,14 @@ export class Trees {
     this.rebuild();
   }
 
+  season = 1;
+
+  setSeason(season: number): void {
+    if (season === this.season) return;
+    this.season = season;
+    this.rebuild();
+  }
+
   rebuild(): void {
     const w = this.world;
     const counts = [0, 0];
@@ -54,10 +71,7 @@ export class Trees {
     const q = new THREE.Quaternion();
     const up = new THREE.Vector3(0, 1, 0);
     const color = new THREE.Color();
-    const palettes = [
-      ['#2f6b3a', '#3b7d44', '#28603a', '#447f3c'],
-      ['#5d9b3c', '#6fa842', '#4f8d36', '#83b14a', '#9bb54a'],
-    ];
+    const palettes = SEASON_PALETTES[this.season];
     for (let idx = 0; idx < w.trees.length; idx++) {
       const count = w.trees[idx];
       if (!count) continue;

@@ -4,6 +4,7 @@ import { BuildState } from '../sim/zones';
 import { Service, Utility } from '../sim/services';
 import type { Utilities } from '../sim/Utilities';
 import { createServiceModels } from './serviceModels';
+import { patchEnv } from './envMaterials';
 
 function iconTexture(draw: (g: CanvasRenderingContext2D) => void, bg: string): THREE.Texture {
   const c = document.createElement('canvas');
@@ -52,7 +53,7 @@ export class ServiceLayer {
 
   constructor(private world: World, private utilities: Utilities) {
     const models = createServiceModels();
-    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.8, metalness: 0.05, side: THREE.DoubleSide });
+    const mat = patchEnv(new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.8, metalness: 0.05, side: THREE.DoubleSide }), { windows: true, snow: true });
     for (const [type, geo] of models) {
       const mesh = new THREE.InstancedMesh(geo, mat, 256);
       mesh.castShadow = true;

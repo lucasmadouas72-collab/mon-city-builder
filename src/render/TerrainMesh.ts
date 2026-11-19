@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { SEA_LEVEL } from '../config';
 import { valueNoise } from '../core/noise';
 import type { World } from '../sim/World';
+import { patchEnv } from './envMaterials';
 
 const BASE_Y = -4;
 
@@ -89,7 +90,7 @@ export function createTerrainMesh(world: World): THREE.Mesh {
   geo.computeVertexNormals();
   geo.computeBoundingSphere();
 
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.95, metalness: 0, side: THREE.DoubleSide });
+  const mat = patchEnv(new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.95, metalness: 0, side: THREE.DoubleSide }), { snow: true, tint: true });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   mesh.castShadow = true;

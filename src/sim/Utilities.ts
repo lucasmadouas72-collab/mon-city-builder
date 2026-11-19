@@ -45,6 +45,8 @@ export class Utilities {
   budget: (key: BudgetKey) => number = () => 1;
   /** Ajustement global du bonheur (impôts…). */
   happinessOffset = 0;
+  /** Multiplicateurs de consommation (saison, météo). */
+  consumptionMul = [1, 1, 1, 1];
   stats: UtilityStats = { supply: [0, 0, 0, 0], demand: [0, 0, 0, 0], served: [0, 0, 0, 0], happiness: 0, coverage: {}, burning: 0 };
 
   constructor(private world: World, private access: (idx: number) => number, private capacity: (idx: number) => number) {
@@ -158,8 +160,9 @@ export class Utilities {
       buildingNet[idx] = net;
       const cap = this.capacity(idx);
       for (const u of UTILITIES) {
-        totalDemand[u] += cap * CONSUMPTION[u];
-        if (net >= 0) get(demand, net)[u] += cap * CONSUMPTION[u];
+        const c = cap * CONSUMPTION[u] * this.consumptionMul[u];
+        totalDemand[u] += c;
+        if (net >= 0) get(demand, net)[u] += c;
       }
     }
 

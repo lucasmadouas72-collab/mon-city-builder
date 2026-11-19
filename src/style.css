@@ -224,3 +224,8 @@ button.primary { margin-top: 14px; padding: 9px 18px; border-radius: 10px; backg
 .ms-modal p b { color: var(--text); }
 @media (max-width: 1250px) { .milestone { display: none; } }
 @media (max-width: 1400px) { .topbar .stat:nth-of-type(4) { display: none; } .date { font-size: 13px; } }
+
+/* ---- Phase 6 : horloge et météo ---- */
+.clock { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.25; }
+.clock .date { font-size: 13px; color: var(--text); }
+.clock .weather { font-size: 11.5px; color: var(--muted); }

@@ -7,6 +7,7 @@ import { TrafficView } from './render/TrafficView';
 import { DataView } from './render/DataView';
 import { ServiceLayer } from './render/ServiceLayer';
 import { TransitView } from './render/TransitView';
+import { Atmosphere } from './render/Atmosphere';
 import { Simulation } from './sim/Simulation';
 import { World } from './sim/World';
 import { Hud } from './ui/Hud';
@@ -25,6 +26,8 @@ const services = new ServiceLayer(world, sim.utilities);
 const transitView = new TransitView(world, sim.transit);
 view.scene.add(trafficView.group, dataView.overlay.group, services.group, transitView.group);
 tools.onDraft = (kind, tiles) => transitView.setDraft(kind, tiles);
+const atmosphere = new Atmosphere(view, world);
+view.scene.add(atmosphere.group);
 sim.events.on('transitChanged', () => transitView.rebuild());
 new Hud(document.getElementById('hud')!, sim, tools, dataView);
 tools.setTool('road');
@@ -33,6 +36,7 @@ sim.events.on('roadsChanged', () => {
   view.roads.rebuild();
   view.buildings.markChanged([]);
   services.rebuild();
+  atmosphere.rebuildLamps();
 });
 sim.events.on('servicesChanged', () => { services.rebuild(); transitView.rebuild(); });
 sim.events.on('firesChanged', () => services.refreshFires());
@@ -54,6 +58,8 @@ function frame(now: number) {
   dataView.update(now / 1000);
   services.update(now / 1000);
   transitView.visible = dataView.mode === 'transport' || tools.tool === 'busline' || tools.tool === 'metroline' || tools.tool === 'busstop';
+  atmosphere.update(sim.env, sim.monthIndex, Math.min(dt, 0.1), now / 1000);
+  view.trees.setSeason(sim.env.season(sim.monthIndex));
   view.render(now / 1000);
   requestAnimationFrame(frame);
 }
@@ -61,4 +67,4 @@ requestAnimationFrame(frame);
 document.getElementById('loading')?.remove();
 
 // Accès console pour le débogage
-Object.assign(window, { game: { world, sim, view, cam, tools, trafficView, dataView, services, transitView } });
+Object.assign(window, { game: { world, sim, view, cam, tools, trafficView, dataView, services, transitView, atmosphere } });

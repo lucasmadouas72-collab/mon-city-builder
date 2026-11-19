@@ -109,6 +109,8 @@ export class Traffic {
   /** Part des trajets faits en transport en commun (moyenne glissante). */
   transitShare = 0;
   transitHook?: (a: number, b: number) => boolean;
+  /** Facteur de vitesse (météo). */
+  speedFactor = 1;
 
   private nextId = 1;
   private rand = rng(4242);
@@ -438,7 +440,7 @@ export class Traffic {
           if (ahead < gap) gap = ahead;
         }
       }
-      let targetSpeed = v.maxSpeed;
+      let targetSpeed = v.maxSpeed * this.speedFactor;
       const len = v.kind === VehicleKind.Bus ? 0.4 : v.kind === VehicleKind.Truck ? 0.34 : 0.24;
       if (v.dwell > 0) { v.dwell -= dt; targetSpeed = 0; }
       if (gap < Infinity) targetSpeed *= Math.max(0, Math.min(1, (gap - len) / SAFE_GAP));

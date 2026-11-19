@@ -6,6 +6,7 @@ import { rng } from '../core/noise';
 import { Tile, World } from './World';
 import { Traffic } from './Traffic';
 import { Utilities } from './Utilities';
+import { Environment } from './Environment';
 import { Transit, type TransitKind } from './Transit';
 import {
   BUDGET_KEYS, BUS_STOP_COST, BUS_UNLOCK, BUS_UPKEEP, DEFAULT_TAX, LOAN_OFFERS, MAX_LOANS, MAX_TAX, METRO_LINE_UPKEEP,
@@ -74,6 +75,7 @@ export class Simulation {
   readonly traffic: Traffic;
   readonly utilities: Utilities;
   readonly transit: Transit;
+  readonly env = new Environment();
   private lastUtilityHint = -999;
 
   constructor(world: World) {
@@ -94,8 +96,13 @@ export class Simulation {
     this.events.emit('speedChanged', this.speedIndex);
   }
 
+  /** Nombre de mois écoulés depuis le début de la partie. */
+  get monthIndex(): number {
+    return Math.floor(this.dayCount / DAYS_PER_MONTH);
+  }
+
   get date() {
-    const month = Math.floor(this.dayCount / DAYS_PER_MONTH);
+    const month = this.monthIndex + this.env.startMonth;
     return { day: (this.dayCount % DAYS_PER_MONTH) + 1, month: month % 12, year: 1 + Math.floor(month / 12) };
   }
 
@@ -160,7 +167,9 @@ export class Simulation {
     const scaled = Math.min(dt, 0.1) * this.speed;
     // Trafic : pas variable (mouvement fluide), découpé pour rester stable en vitesse rapide
     const sub = Math.ceil(scaled / 0.05);
-    const target = Math.round(this.traffic.targetVehicles(this.stats.population, this.stats.totalJobs) * (1 - this.traffic.transitShare));
+    this.env.advance(scaled);
+    this.traffic.speedFactor = this.env.trafficSpeed;
+    const target = Math.round(this.traffic.targetVehicles(this.stats.population, this.stats.totalJobs) * (1 - this.traffic.transitShare) * this.env.trafficVolume);
     for (let k = 0; k < sub; k++) this.traffic.update(scaled / sub, target);
     this.accumulator += Math.min(dt, 0.25) * this.speed;
     while (this.accumulator >= SIM_STEP) {
@@ -185,6 +194,7 @@ export class Simulation {
   private onNewDay(): void {
     const w = this.world;
     const changed: number[] = [];
+    if (this.env.onNewDay(this.monthIndex)) this.events.emit('weatherChanged', undefined);
 
     // Avancement des chantiers
     for (const idx of this.zonedTiles()) {
@@ -365,7 +375,8 @@ export class Simulation {
       if (z === Zone.Residential) population += cap;
       else jobs[z] += cap;
     }
-    this.utilities.happinessOffset = -(this.taxes[Zone.Residential] - DEFAULT_TAX) * 0.012;
+    this.utilities.happinessOffset = -(this.taxes[Zone.Residential] - DEFAULT_TAX) * 0.012 + this.env.happiness;
+    this.utilities.consumptionMul = this.env.consumption(this.monthIndex);
     this.utilities.compute();
     const totalJobs = jobs[Zone.Commercial] + jobs[Zone.Industrial] + jobs[Zone.Office];
     const workers = Math.round(population * 0.55);

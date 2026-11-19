@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Traffic } from '../sim/Traffic';
 import { VehicleKind } from '../sim/Traffic';
 import type { World } from '../sim/World';
+import { patchEnv } from './envMaterials';
 
 const MAX = 1600;
 
@@ -65,7 +66,7 @@ export class Vehicles {
   private c = new THREE.Color();
 
   constructor(private world: World, private traffic: Traffic) {
-    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.25 });
+    const mat = patchEnv(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.25 }), { headlights: true, snow: true });
     this.meshes = [carGeometry(), truckGeometry(), busGeometry()].map((g) => {
       const mesh = new THREE.InstancedMesh(g, mat, MAX);
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
