@@ -6,9 +6,9 @@ import { hasJobs } from './zones';
 /** Sauvegarde complète d'une partie, au format JSON (tableaux encodés en base64). */
 
 const VERSION = 1;
-const ARRAYS = ['heights', 'tiles', 'trees', 'zones', 'bState', 'bLevel', 'bVariant', 'bTimer', 'service', 'busStop', 'roadType', 'oneway', 'lights', 'links', 'bDamage', 'rubble', 'roadDamage', 'soilPol', 'lotRoot', 'lotSize', 'bFace', 'bStyle', 'bId', 'bManual', 'powerLine', 'resources'] as const;
+const ARRAYS = ['heights', 'tiles', 'trees', 'zones', 'bState', 'bLevel', 'bVariant', 'bTimer', 'service', 'busStop', 'roadType', 'oneway', 'lights', 'links', 'bDamage', 'rubble', 'roadDamage', 'soilPol', 'lotRoot', 'lotSize', 'bFace', 'bStyle', 'bId', 'bManual', 'powerLine', 'resources', 'district', 'condition'] as const;
 /** Tableaux ajoutés après la première version (absents des anciennes sauvegardes). */
-const OPTIONAL = new Set(['roadType', 'oneway', 'lights', 'links', 'bDamage', 'rubble', 'roadDamage', 'soilPol', 'lotRoot', 'lotSize', 'bFace', 'bStyle', 'bId', 'bManual', 'powerLine', 'resources']);
+const OPTIONAL = new Set(['roadType', 'oneway', 'lights', 'links', 'bDamage', 'rubble', 'roadDamage', 'soilPol', 'lotRoot', 'lotSize', 'bFace', 'bStyle', 'bId', 'bManual', 'powerLine', 'resources', 'district', 'condition']);
 type ArrayKey = (typeof ARRAYS)[number];
 
 function toB64(arr: ArrayBufferView): string {
@@ -58,6 +58,10 @@ export function serialize(sim: Simulation, config: GameConfig, camera?: CameraSt
       citizens: sim.society.citizens.serialize(),
       nextBuildingId: sim.nextBuildingId,
       waste: sim.waste.serialize(),
+      districts: sim.districts.serialize(),
+      council: sim.council.serialize(),
+      ledger: sim.ledger,
+      investMonth: sim.investMonth,
       gridPolicy: sim.utilities.policy,
       waterStorage: [...sim.utilities.storage],
       chainStock: { goods: sim.society.chain.goodsStock, raw: sim.society.chain.rawStock },
@@ -95,6 +99,10 @@ export function applySave(sim: Simulation, file: SaveFile): void {
   sim.history = s.history ?? [];
   sim.nextBuildingId = s.nextBuildingId ?? 1;
   sim.waste.restore(s.waste);
+  sim.districts.restore(s.districts);
+  sim.council.restore(s.council);
+  sim.ledger = s.ledger ?? [];
+  sim.investMonth = s.investMonth ?? {};
   if (s.gridPolicy) Object.assign(sim.utilities.policy, s.gridPolicy);
   if (s.waterStorage) sim.utilities.storage = new Map(s.waterStorage);
   if (s.chainStock) { sim.society.chain.goodsStock = s.chainStock.goods; sim.society.chain.rawStock = s.chainStock.raw; }

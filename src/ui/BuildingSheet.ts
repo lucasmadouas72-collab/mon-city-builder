@@ -32,6 +32,7 @@ export class BuildingSheet {
       if (act === 'upgrade') { this.tools.undo?.record(() => this.sim.upgradeBuilding(sel)) ?? this.sim.upgradeBuilding(sel); this.render(); }
       if (act === 'rotate') { this.sim.rotateBuilding(sel); this.render(); }
       if (act === 'move') this.tools.startMove(sel);
+      if (act === 'renovate') { this.sim.renovate([sel]); this.render(); }
       if (act === 'delete') this.tools.deleteSelected();
     });
     sim.events.on('buildingsChanged', () => { if (!this.el.hidden) this.render(); });
@@ -70,8 +71,10 @@ export class BuildingSheet {
         ${L?.capacity ? `<dt>Capacité</dt><dd>${L.used} / ${L.capacity}</dd>` : ''}
         ${info.radius ? `<dt>Portée</dt><dd>${info.radius} cases de route</dd>` : ''}
         <dt>Accès routier</dt><dd class="${ut.networkOf(idx) < 0 ? 'bad' : ''}">${ut.networkOf(idx) < 0 ? 'non relié' : 'oui'}</dd>
+        <dt>État d’entretien</dt><dd class="${w.condition[idx] < 50 ? 'bad' : ''}">${Math.round(w.condition[idx])} %${w.condition[idx] < 50 ? ' (rendement réduit)' : ''}${sim.disasters.offline.has(idx) ? ' · en panne' : ''}</dd>
+        ${w.district[idx] ? `<dt>Quartier</dt><dd>${sim.districts.nameAt(idx)}</dd>` : ''}
       </dl></section>
-      <div class="actions"><button data-act="move">Déplacer (${fmt(info.cost * 0.2)})</button><button data-act="delete" class="danger">Démolir</button></div>`;
+      <div class="actions"><button data-act="renovate" ${w.condition[idx] < 99 ? '' : 'disabled'}>Rénover · ${fmt(sim.renovationCost(idx))}</button><button data-act="move">Déplacer (${fmt(info.cost * 0.2)})</button><button data-act="delete" class="danger">Démolir</button></div>`;
   }
 
   private buildingHtml(a: number): string {
@@ -126,6 +129,7 @@ export class BuildingSheet {
         <dt>Catégorie</dt><dd>${info.category}</dd>
         <dt>Style</dt><dd>${style}${w.bStyle[a] ? '' : ' (quartier)'}</dd>
         <dt>Origine</dt><dd>${w.bManual[a] ? 'posé à la main' : 'construit par le marché'}</dd>
+        ${w.district[a] ? `<dt>Quartier</dt><dd>${sim.districts.nameAt(a)}</dd>` : ''}
       </dl></section>
       <section><b>Emprise</b><dl>
         <dt>Parcelle</dt><dd>${gw} × ${gh} case(s)</dd>

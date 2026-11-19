@@ -82,7 +82,8 @@ export class Society {
   siteFactor(k: number): number {
     const w = this.sim.world, z = w.zones[k];
     if (z === Zone.Agriculture) return ((w.resources[k] & Resource.Fertile) ? 1.3 : 0.8) * (1 + this.sim.waste.compostBoost);
-    if (z === Zone.Mining) return (w.resources[k] & Resource.Ore) ? 1.1 : 0.2;
+    if (z === Zone.Mining) return ((w.resources[k] & Resource.Ore) ? 1.1 : 0.2) * (this.sim.districts.has(k, 'trucks') ? 0.95 : 1);
+    if (z === Zone.Industrial && this.sim.districts.has(k, 'trucks')) return 0.95;
     if (z === Zone.Forestry) {
       const n = w.size, i0 = k % n, j0 = Math.floor(k / n);
       let trees = 0;
@@ -203,7 +204,8 @@ export class Society {
     const w = this.sim.world;
     const lv = this.landValue[tile];
     const scarcity = Math.max(0, 0.06 - this.vacancy) * 5;
-    return Math.round((300 + 150 * Math.max(1, w.bLevel[tile])) * (0.6 + 0.8 * lv) * (1 + scarcity) * this.costOfLiving);
+    const aid = this.sim.districts.has(tile, 'housingAid') ? 0.8 : 1;
+    return Math.round((300 + 150 * Math.max(1, w.bLevel[tile])) * (0.6 + 0.8 * lv) * (1 + scarcity) * this.costOfLiving * aid);
   }
 
   /** Logement libre le plus adapté : loyer abordable, quartier agréable, proche si possible. */
@@ -363,7 +365,7 @@ export class Society {
       } else if (jobKind(z) === Zone.Commercial) {
         // Part des achats des ménages selon la taille et l'attrait du commerce, limitée par son personnel
         const share = wC ? spending * (sim.jobCapacity(k) * (0.7 + lv * 0.6) * (z === Zone.CommercialDense ? 1.15 : 1)) / wC : 0;
-        rev = Math.min(share, c.employees[k] * SALES_PER_EMPLOYEE);
+        rev = Math.min(share, c.employees[k] * SALES_PER_EMPLOYEE) * sim.districts.commerceFactor(k) * (1 + sim.council.mod('commerce'));
         this.target[k] = Math.max(1, Math.min(slotsAll, Math.ceil(share / SALES_PER_EMPLOYEE)));
         goods = rev * GOODS_SHARE * (1 + (goodsDemand ? imports / goodsDemand : 0) * 0.15);
       } else if (z === Zone.Industrial) {
@@ -447,13 +449,18 @@ export class Society {
     const w = this.sim.world, c = this.citizens;
     let res = 0;
     for (let h = 0; h < c.hCount; h++) if (c.hAlive[h]) res += c.hIncome[h];
-    const out: Record<string, number> = { residential: res * (rates[Zone.Residential] / 100) * 0.02 * mul, commercial: 0, industrial: 0, office: 0 };
+    // Impôts locaux : chaque quartier peut ajuster ses taux
+    const d = this.sim.districts;
+    let resAdj = 0;
+    for (let h = 0; h < c.hCount; h++) if (c.hAlive[h] && c.hHome[h] >= 0) resAdj += c.hIncome[h] * d.taxMod(c.hHome[h], Zone.Residential);
+    const out: Record<string, number> = { residential: (res * rates[Zone.Residential] + resAdj) / 100 * 0.02 * mul, commercial: 0, industrial: 0, office: 0 };
     const key: Record<number, string> = { [Zone.Commercial]: 'commercial', [Zone.Industrial]: 'industrial', [Zone.Office]: 'office' };
     for (let k = 0; k < w.bState.length; k++) {
       if (w.bState[k] !== BuildState.Built) continue;
       const z = jobKind(w.zones[k]);
       if (!z || !key[z]) continue;
-      out[key[z]] += (Math.max(0, this.preTax[k]) * (rates[z] / 100) * 0.9 * 0.05 + c.employees[k] * 0.4 * (rates[z] / 9)) * mul;
+      const rate = Math.max(0, rates[z] + d.taxMod(k, z));
+      out[key[z]] += (Math.max(0, this.preTax[k]) * (rate / 100) * 0.9 * 0.05 + c.employees[k] * 0.4 * (rate / 9)) * mul;
     }
     return out;
   }

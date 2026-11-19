@@ -89,6 +89,19 @@ export function diagnose(sim: Simulation): Issue[] {
   if (chain.unsold > 2000) out.push({ id: 'unsold', severity: 'warning', title: 'Marchandises invendues', causes: ['La production dépasse ce que la ville consomme et peut exporter ou stocker.'], actions: ['Zoner de la logistique (export et stockage).', 'Moins d’industrie, plus de commerces.'] });
   if (chain.rawNeed > 3000 && chain.rawImport > chain.rawNeed * 0.7) out.push({ id: 'raw-import', severity: 'warning', title: 'Matières premières importées', causes: [`${pct(chain.rawImport / chain.rawNeed)} des matières premières de l’industrie sont importées (30 % plus chères).`], actions: ['Zoner de l’agriculture, de la sylviculture ou de l’extraction (carte « Ressources naturelles »).'], view: 'resources' });
 
+  // ----- Entretien du patrimoine -----
+  const worn = sim.wornRoads();
+  let wornSvc = 0, firstWornSvc: number | undefined;
+  for (let k = 0; k < w.service.length; k++) if (w.service[k] && w.condition[k] < 50) { wornSvc++; firstWornSvc ??= k; }
+  if (worn.length > 10 || wornSvc) {
+    out.push({
+      id: 'worn', severity: wornSvc > 2 || worn.length > 80 ? 'serious' : 'warning', title: `Patrimoine usé : ${n(worn.length)} case(s) de route, ${wornSvc} équipement(s) sous 50 %`,
+      causes: ['Le trafic use les routes ; les équipements vieillissent.', sim.budgets.maintenance < 100 ? `Budget d’entretien réduit (${sim.budgets.maintenance} %).` : 'Le budget d’entretien ne suffit pas sur les axes les plus chargés.'],
+      actions: ['Augmenter le budget « Entretien du patrimoine ».', 'Rénover depuis la fiche d’un équipement ou dans Finances → Entretien.', 'Politique de quartier « Priorité d’entretien ».'],
+      tile: firstWornSvc ?? worn[0], view: 'condition',
+    });
+  }
+
   const abandoning = built.filter((k) => ut.problemDays[k] > 0);
   if (abandoning.length) {
     out.push({

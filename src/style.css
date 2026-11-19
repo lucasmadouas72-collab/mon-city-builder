@@ -462,3 +462,57 @@ label.inline select option { background: var(--bg-solid); }
 .nbox em { font-style: normal; font-variant-numeric: tabular-nums; font-weight: 600; }
 .status { cursor: pointer; }
 .status:hover { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent); }
+
+/* ---- Étape 13 : finances, quartiers, conseil ---- */
+.finances { width: min(1000px, 100%); }
+.finances header, .council header { display: flex; justify-content: space-between; align-items: center; }
+.finances .close, .council .close { font-size: 24px; color: var(--muted); }
+.finances .pos, .council .pos { color: #4ade80; }
+.finances .neg, .council .neg { color: var(--bad); }
+.ledger tr.grp td { padding-top: 10px; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); }
+.ledger.cmp td { font-variant-numeric: tabular-nums; padding: 3px 8px; }
+.ledger.cmp { width: 100%; }
+.ledger small.up { color: #4ade80; } .ledger small.down { color: #f87171; }
+.ledger.sched { width: 100%; margin: 4px 0 10px; font-size: 12px; }
+.pbtn { display: flex; gap: 6px; flex-wrap: wrap; }
+.spark { width: 100%; height: 60px; display: block; }
+.spark.wide { height: 90px; }
+.spark polyline { fill: none; stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.spark .mid { stroke: rgba(255,255,255,0.15); stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
+.council { width: min(1000px, 100%); }
+.obj, .compl { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; font-size: 13px; }
+.obj li { display: flex; justify-content: space-between; gap: 10px; padding: 6px 10px; border-radius: 8px; background: rgba(255,255,255,0.04); }
+.obj li::before { content: '○'; color: var(--muted); margin-right: 6px; }
+.obj li.ok::before { content: '✓'; color: #4ade80; }
+.obj li span { flex: 1; } .obj em { font-style: normal; color: var(--muted); }
+.compl li { padding: 6px 10px; border-radius: 8px; background: rgba(255,255,255,0.04); font-style: italic; }
+.compl small { display: block; font-style: normal; color: var(--muted); font-size: 11.5px; }
+.proj { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,0.04); margin-bottom: 6px; }
+.proj > div:first-child { flex: 1; }
+.proj small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.ptags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.ptags span { font-size: 11.5px; padding: 2px 8px; border-radius: 6px; background: rgba(255,255,255,0.07); }
+.ptags .eff { background: rgba(74,222,128,0.14); color: #bbf7d0; }
+.ptags .risk { background: rgba(251,191,36,0.14); color: #fde68a; }
+.pprog { height: 6px; border-radius: 4px; background: rgba(255,255,255,0.08); margin-top: 6px; overflow: hidden; }
+.pprog i { display: block; height: 100%; background: var(--accent); }
+.council-btn { position: relative; }
+.council-btn #approval { position: absolute; right: -4px; bottom: -4px; font-style: normal; font-size: 10px; font-weight: 800; padding: 0 4px; border-radius: 6px; background: #1f2937; color: var(--text); }
+.council-btn #approval.pos { color: #4ade80; } .council-btn #approval.neg { color: #f87171; }
+.district-panel { width: 320px; }
+.dlist { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 8px; }
+.dchip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 8px; background: rgba(255,255,255,0.06); font-size: 12px; font-weight: 600; }
+.dchip i { width: 10px; height: 10px; border-radius: 3px; }
+.dchip.active { box-shadow: inset 0 0 0 1px var(--accent); background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.dchip.new { color: var(--accent); }
+.dname { width: 100%; padding: 6px 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15); background: rgba(0,0,0,0.25); color: var(--text); font: inherit; }
+.pol { display: grid; grid-template-columns: 30px 1fr; gap: 8px; align-items: start; width: 100%; text-align: left; padding: 6px 4px; border-radius: 8px; }
+.pol:hover { background: rgba(255,255,255,0.05); }
+.pol .tg { width: 28px; height: 16px; border-radius: 9px; background: rgba(255,255,255,0.15); position: relative; margin-top: 2px; }
+.pol .tg::after { content: ''; position: absolute; left: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: #cbd5e1; transition: left .15s; }
+.pol.on .tg { background: var(--accent); } .pol.on .tg::after { left: 14px; background: #fff; }
+.pol b { font-size: 12.5px; } .pol small { display: block; font-size: 11.5px; color: var(--muted); }
+.dtax { display: grid; grid-template-columns: 1fr 26px auto 26px; gap: 6px; align-items: center; font-size: 12.5px; margin: 3px 0; }
+.dtax i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; }
+.dtax button { height: 24px; border-radius: 6px; background: rgba(255,255,255,0.08); font-weight: 800; }
+.dtax b { text-align: center; font-variant-numeric: tabular-nums; min-width: 92px; }

@@ -86,6 +86,15 @@ export class Utilities {
   /** Les déchets du bâtiment sont-ils collectés, et quel est leur niveau (jours de production) ? */
   garbageOk: (idx: number) => boolean = () => true;
   garbageLevel: (idx: number) => number = () => 0;
+  /** Bonheur ajouté par les politiques de quartier, et effet des politiques sur les pollutions. */
+  districtHappiness: (idx: number) => number = () => 0;
+  afterPollution: (air: Float32Array, noise: Float32Array, light: Float32Array) => void = () => {};
+
+  /** Rendement d'un équipement selon son état d'entretien (100 % au-dessus de 50 % d'état). */
+  conditionFactor(idx: number): number {
+    const c = this.world.condition[idx];
+    return c >= 50 ? 1 : 0.5 + c / 100;
+  }
 
   /** Chaque jour : les châteaux d'eau se remplissent avec le surplus ou se vident pendant les pénuries. */
   daily(): void {
@@ -224,6 +233,7 @@ export class Utilities {
       air[k] = Math.max(0, Math.min(1, air[k]));
       noise[k] = Math.max(0, Math.min(1, noise[k]));
     }
+    this.afterPollution(air, noise, this.light);
   }
 
   /** Une station de pompage proche d'une eau polluée distribue une eau contaminée sur son réseau. */
@@ -357,7 +367,7 @@ export class Utilities {
       if (!s) continue;
       const info = SERVICE_INFO[s as Exclude<Service, Service.None>];
       const i = idx % n, j = (idx - i) / n;
-      const off = this.offline.has(idx) ? 0 : 1;
+      const off = (this.offline.has(idx) ? 0 : 1) * this.conditionFactor(idx);
       const bud = this.budget(info.budget);
       if (info.utility === Utility.Power) {
         const src = info.powerSource ?? 'thermal';
@@ -570,7 +580,7 @@ export class Utilities {
       if (this.contaminated[idx]) h -= 0.12;
       h -= w.soilPol[idx] * 0.12 + (hasHomes(w.zones[idx]) ? this.light[idx] * 0.05 : 0);
       if (w.bDamage[idx]) h -= w.bDamage[idx] / 400;
-      h += this.happinessOffset;
+      h += this.happinessOffset + this.districtHappiness(idx);
       if (this.fire[idx]) h -= 0.3;
       h = Math.max(0, Math.min(1, h));
       this.happiness[idx] = h;

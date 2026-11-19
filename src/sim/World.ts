@@ -95,6 +95,10 @@ export class World {
   readonly powerLine: Uint8Array;
   /** Ressources naturelles du sous-sol et du sol (bits Resource), déduites du relief et de la graine. */
   readonly resources: Uint8Array;
+  /** Quartier de chaque case (0 = aucun). */
+  readonly district: Uint8Array;
+  /** État des routes et équipements (0 à 100 %), baisse avec l'usure. */
+  readonly condition: Float32Array;
 
   readonly mapType: MapType;
 
@@ -131,6 +135,8 @@ export class World {
     this.bManual = new Uint8Array(n * n);
     this.powerLine = new Uint8Array(n * n);
     this.resources = new Uint8Array(n * n);
+    this.district = new Uint8Array(n * n);
+    this.condition = new Float32Array(n * n).fill(100);
     if (generate) { this.generate(); this.computeResources(); }
   }
 

@@ -16,6 +16,8 @@ import { VIEW_LABELS, type DataView, type ViewMode } from '../render/DataView';
 import { ALL_ZONES, BuildState, hasHomes, hasJobs, KIND_COLORS, KIND_SHORT, LEVEL_NAMES, STATE_NAMES, STYLE_NAMES, Zone, ZONE_INFO, ZONES, type ZoneId, type ZoneType } from '../sim/zones';
 import { BuildingSheet } from './BuildingSheet';
 import { NetworksPanel } from './NetworksPanel';
+import { DistrictPanel } from './DistrictPanel';
+import { CouncilPanel } from './CouncilPanel';
 import {
   COVERAGE_NAMES, COVERAGES, SERVICE_INFO, SERVICES, UTILITIES, UTILITY_COLORS, UTILITY_NAMES, UTILITY_SHORT, Utility, type Service,
 } from '../sim/services';
@@ -34,6 +36,8 @@ const ICONS: Record<string, string> = {
   stats: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   advisor: '<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.5 1 2.5h6c0-1 .3-1.8 1-2.5A6 6 0 0 0 12 3z"/>',
   bell: '<path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
+  district: '<path d="M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3z"/><path d="M9 3v15M15 6v15" opacity=".6"/>',
+  council: '<path d="M3 21h18M4 10h16M12 3l9 5H3z"/><path d="M6 10v8M10 10v8M14 10v8M18 10v8"/>',
   library: '<path d="M4 21V9l5-4v16M9 21V3l6 4v14M15 21v-9l5 3v6"/><path d="M2 21h20"/>',
   undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
   redo: '<path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>',
@@ -91,6 +95,10 @@ const GROUPS: Group[] = [
     { id: 'powerline', label: 'Ligne haute tension', color: '#9aa1a8', sub: '18 € / case', desc: 'Relie des réseaux électriques séparés, ou une centrale éloignée des routes. Passe au-dessus des routes, des champs et de l’eau.' }] },
   { id: 'services', label: 'Services', icon: 'services', tools: svcTools('services') },
   { id: 'transport', label: 'Transports', icon: 'transport', tools: TRANSPORT_TOOLS },
+  { id: 'districts', label: 'Quartiers', icon: 'district', tools: [
+    { id: 'district', label: 'Tracer un quartier', color: '#f472b6', sub: 'Glisser sur la carte', desc: 'Glissez pour créer un quartier ou agrandir le quartier choisi.' },
+    { id: 'undistrict', label: 'Retirer du quartier', color: '#fb923c', sub: 'Glisser sur la carte' },
+  ] },
   { id: 'terrain', label: 'Terrain', icon: 'terrain', tools: [
     { id: 'tUp', label: 'Élever', color: '#a3e635', sub: '3 € par point de relief', desc: 'Cliquez-glissez pour monter le sol.' },
     { id: 'tDown', label: 'Abaisser', color: '#38bdf8', sub: '3 € · sous 0 m, crée de l\'eau', desc: 'Cliquez-glissez pour creuser. Sous le niveau de la mer, l\'eau apparaît.' },
@@ -109,6 +117,8 @@ const KEYED: ToolDef[] = [
 export class Hud {
   private el = (sel: string) => this.root.querySelector(sel) as HTMLElement;
   private openGroup: string | null = null;
+  private districtPanel!: DistrictPanel;
+  private lastTool: ToolId | null = null;
   private budget!: BudgetPanel;
   private advisor!: AdvisorPanel;
   private stats!: StatsPanel;
@@ -152,6 +162,7 @@ export class Hud {
         <div class="spacer"></div>
         <div class="milestone" id="milestone" title=""><span class="ms-name"></span><div class="ms-bar"><i></i></div></div>
         <button class="icon-btn advisor-btn" id="advisor-btn" title="Conseiller : problèmes, causes et solutions">${icon('advisor')}<i class="badge" id="advisor-badge" hidden></i></button>
+        <button class="icon-btn council-btn" id="council-btn" title="Conseil municipal : projets, objectifs, plaintes, élections">${icon('council')}<i id="approval"></i></button>
         <button class="icon-btn" id="stats-btn" title="Statistiques">${icon('stats')}</button>
         <button class="icon-btn" id="journal-btn" title="Journal de la ville">${icon('bell')}<i class="badge" id="journal-badge" hidden></i></button>
         <div class="views">
@@ -219,6 +230,10 @@ export class Hud {
     this.budget = new BudgetPanel(root, sim);
     this.stats = new StatsPanel(root, sim);
     const networks = new NetworksPanel(root, sim);
+    const council = new CouncilPanel(root, sim);
+    this.el('#council-btn').addEventListener('click', () => council.toggle());
+    this.districtPanel = new DistrictPanel(root, sim, tools);
+    tools.onDistrict = () => this.districtPanel.toggle(true);
     this.el('#status').title = 'Cliquez pour le détail des réseaux et de la production';
     this.el('#status').addEventListener('click', () => networks.toggle(true));
     this.el('#stats-btn').addEventListener('click', () => this.stats.toggle());
@@ -388,6 +403,9 @@ export class Hud {
     const n = (v: number) => v.toLocaleString('fr-FR');
     this.el('#pop').textContent = n(st.population);
     this.el('#jobs').textContent = n(st.totalJobs);
+    const ap = this.el('#approval');
+    ap.textContent = `${Math.round(this.sim.council.approval * 100)}`;
+    ap.className = this.sim.council.approval >= 0.55 ? 'pos' : this.sim.council.approval < 0.45 ? 'neg' : '';
     const bal = st.income - st.expenses;
     const b = this.el('#balance');
     b.textContent = (bal >= 0 ? '+' : '') + fmt(bal);
@@ -476,6 +494,11 @@ export class Hud {
   }
 
   private updateTool(tool: ToolId): void {
+    if (tool === 'district' || tool === 'undistrict') {
+      if (!this.districtPanel.open) this.districtPanel.toggle(true);
+      if (this.views.mode !== 'districts') this.views.set('districts');
+    } else if (this.views.mode === 'districts' && this.lastTool?.includes('district')) this.views.set('districts');
+    this.lastTool = tool;
     const g = this.groupOf(tool);
     if (g && g.tools.length > 1) this.openGroup = g.id;
     else if (g) this.openGroup = null;
@@ -501,6 +524,7 @@ export class Hud {
       extra = `${info.kmh ? `<dt>Vitesse</dt><dd>${info.kmh} km/h</dd>` : '<dt>Accès</dt><dd>Piétons uniquement</dd>'}
         ${ow ? `<dt>Sens</dt><dd>Unique (vers le ${DIR_NAMES[ow - 1]})</dd>` : ''}
         ${w.lights[idx] === 1 || w.lights[idx] === 2 ? '<dt>Carrefour</dt><dd>Feux tricolores</dd>' : ''}
+        <dt>État</dt><dd class="${w.condition[idx] < 50 ? 'bad' : ''}">${Math.round(w.condition[idx])} %</dd>
         <dt>Circulation</dt><dd>${TrafficView.label(d)}</dd><dt>Véhicules</dt><dd>${d.toFixed(1)}</dd>`;
     }
     if (svc) {
@@ -585,6 +609,7 @@ export class Hud {
     box.innerHTML = `
       <div class="info-title">${kind}</div>
       <dl>${extra}
+        ${w.district[idx] ? `<dt>Quartier</dt><dd>${this.sim.districts.nameAt(idx)}</dd>` : ''}
         <dt>Case</dt><dd>${h.i}, ${h.j}</dd>
         <dt>Altitude</dt><dd>${(((lo + hi) / 2) * 10).toFixed(0)} m</dd>
         ${w.trees[idx] ? `<dt>Arbres</dt><dd>${w.trees[idx]}</dd>` : ''}

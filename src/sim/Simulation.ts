@@ -11,12 +11,14 @@ import { Emergency } from './Emergency';
 import { Disasters } from './Disasters';
 import { Society } from './Society';
 import { Waste } from './Waste';
+import { Districts } from './Districts';
+import { Council } from './Council';
 import { Status } from './Citizens';
 import { Demographics } from './Population';
 import { DIFFICULTY, defaultConfig, type GameConfig } from '../game/config';
 import { Transit, type TransitKind } from './Transit';
 import {
-  BUDGET_KEYS, BUS_STOP_COST, BUS_UNLOCK, BUS_UPKEEP, DEFAULT_TAX, LOAN_OFFERS, MAX_LOANS, MAX_TAX, METRO_LINE_UPKEEP,
+  EARLY_REPAY_PENALTY, BUDGET_KEYS, BUS_STOP_COST, BUS_UNLOCK, BUS_UPKEEP, DEFAULT_TAX, LOAN_OFFERS, MAX_LOANS, MAX_TAX, METRO_LINE_UPKEEP,
   MILESTONES, MIN_TAX, TICKET_PRICE, defaultBudgets, defaultTaxes, loanPayment, milestoneIndex, type Loan,
 } from './economy';
 import type { BudgetKey } from './services';
@@ -28,6 +30,19 @@ import {
 import { E, N, Resource, S, W } from './World';
 
 const DAYS_PER_MONTH = 30;
+
+/** Comptes d'un mois (§9). */
+export interface LedgerEntry {
+  month: number;
+  incomeBy: Record<string, number>;
+  expensesBy: Record<string, number>;
+  invest: Record<string, number>;
+  income: number;
+  expenses: number;
+  investTotal: number;
+  debt: number;
+  money: number;
+}
 /** Prix de l'énergie et de l'eau échangées avec les villes voisines (€ par unité et par mois). */
 export const POWER_IMPORT_PRICE = 0.5;
 export const POWER_EXPORT_PRICE = 0.2;
@@ -122,6 +137,12 @@ export class Simulation {
   readonly disasters: Disasters;
   readonly society: Society;
   readonly waste: Waste;
+  readonly districts: Districts;
+  readonly council: Council;
+  /** Investissements du mois en cours, par poste (§9). */
+  investMonth: Record<string, number> = {};
+  /** Historique mensuel des comptes (recettes, fonctionnement, investissements, dette). */
+  ledger: LedgerEntry[] = [];
   /** Coût des réparations du mois en cours (facturé en fin de mois). */
   private repairAccum = 0;
   /** Coût des réparations du mois précédent. */
@@ -145,13 +166,18 @@ export class Simulation {
     this.utilities = new Utilities(world, (idx) => this.traffic.roadAccess(idx), (idx) => this.occupants(idx));
     this.utilities.studentsOf = (idx) => this.society.citizens.students[idx];
     this.utilities.sickOf = (idx) => this.society.citizens.sickBy[idx];
-    this.utilities.budget = (k) => this.budgets[k] / 100;
     this.utilities.trafficDensity = this.traffic.density;
     this.transit = new Transit(world, this.traffic);
     this.emergency = new Emergency(world, this.traffic);
     this.emergency.budget = (svc) => this.budgets[SERVICE_INFO[svc as Exclude<Service, Service.None>].budget] / 100;
     this.disasters = new Disasters(this);
     this.waste = new Waste(this);
+    this.districts = new Districts(this);
+    this.council = new Council(this);
+    // Effets des projets du conseil sur l'efficacité des services
+    this.utilities.budget = (k) => (this.budgets[k] / 100) * (1 + (k === 'education' ? this.council.mod('education') : k === 'health' ? this.council.mod('health') : 0));
+    this.utilities.districtHappiness = (idx) => this.districts.happiness(idx);
+    this.utilities.afterPollution = (air, noise, light) => this.districts.applyToPollution(air, noise, light);
     this.utilities.garbageOk = (idx) => this.waste.isCollected(idx);
     this.utilities.garbageLevel = (idx) => this.waste.level(idx);
     // Les missions des camions de collecte et celles des secours partagent le trafic
@@ -259,10 +285,26 @@ export class Simulation {
     this.recomputeStats();
   }
 
+  /** Capital restant dû sur tous les emprunts. */
+  get debt(): number {
+    return this.loans.reduce((a, l) => a + this.loanBalance(l), 0);
+  }
+
+  /** Capacité d'emprunt : 18 mois de recettes moyennes (au moins 40 000 €). */
+  get borrowingCapacity(): number {
+    const last = this.ledger.slice(-12);
+    const avg = last.length ? last.reduce((a, e) => a + e.income, 0) / last.length : this.stats.income;
+    return Math.max(40_000, Math.round(avg * 18));
+  }
+
   takeLoan(index: number): boolean {
     const o = LOAN_OFFERS[index];
     if (!o || this.loans.length >= MAX_LOANS) return false;
-    this.loans.push({ ...o, remaining: o.months, payment: loanPayment(o) });
+    if (this.debt + o.amount > this.borrowingCapacity) {
+      this.events.emit('notify', { text: `Capacité d’emprunt dépassée (${this.borrowingCapacity.toLocaleString('fr-FR')} € au total)`, kind: 'warn' });
+      return false;
+    }
+    this.loans.push({ ...o, remaining: o.months, payment: loanPayment(o), takenAt: this.monthIndex });
     this.money += o.amount;
     this.events.emit('moneyChanged', this.money);
     this.recomputeStats();
@@ -279,13 +321,13 @@ export class Simulation {
   repayLoan(index: number): boolean {
     const l = this.loans[index];
     if (!l) return false;
-    const due = this.loanBalance(l);
+    const due = Math.round(this.loanBalance(l) * (1 + EARLY_REPAY_PENALTY));
     if (due > this.money) {
       this.events.emit('notify', { text: 'Fonds insuffisants pour rembourser', kind: 'error' });
       return false;
     }
     this.loans.splice(index, 1);
-    this.spend(due);
+    this.spend(due, 'debt');
     this.recomputeStats();
     return true;
   }
@@ -332,6 +374,7 @@ export class Simulation {
     this.society.daily();
     this.utilities.daily();
     this.waste.daily();
+    this.maintainDaily();
     this.society.citizens.tally();
     if (this.dayCount % 10 === 0) this.computeCrime();
 
@@ -445,6 +488,63 @@ export class Simulation {
     } else if (this.dayCount % 5 === 0) {
       this.recomputeStats();
     }
+  }
+
+  // ---------- Entretien et dégradation (§13) ----------
+
+  /** Usure quotidienne des routes (selon le trafic) et des équipements, compensée par le budget d'entretien. */
+  private maintainDaily(): void {
+    const w = this.world, cond = w.condition, dens = this.traffic.density;
+    const mb = this.budgets.maintenance / 100;
+    const slow = 1 - Math.min(0.8, this.council.mod('maintenance'));
+    let changed = false;
+    for (let k = 0; k < w.tiles.length; k++) {
+      let decay = 0, repair = 0;
+      if (w.tiles[k] === Tile.Road) { decay = 0.03 + Math.min(4, dens[k]) * 0.04; repair = 0.06 * mb; }
+      else if (w.service[k]) { decay = w.service[k] <= 2 || w.service[k] === Service.NuclearPlant ? 0.085 : 0.07; repair = 0.075 * mb; }
+      else continue;
+      if (this.districts.has(k, 'maintenance')) decay *= 0.5;
+      const before = cond[k];
+      cond[k] = Math.max(0, Math.min(100, cond[k] - decay * slow + repair));
+      if ((before >= 50) !== (cond[k] >= 50) || (before >= 25) !== (cond[k] >= 25)) changed = true;
+      // Pannes des équipements très mal entretenus
+      if (w.service[k] && cond[k] < 20 && !this.disasters.offline.has(k) && this.rand() < 0.01) {
+        this.disasters.offline.set(k, 5);
+        this.events.emit('notify', { text: `Panne : ${SERVICE_INFO[w.service[k] as Exclude<Service, Service.None>].name} hors service quelques jours (mauvais entretien)`, kind: 'warn', tile: k });
+      }
+    }
+    if (changed) this.events.emit('roadsChanged', { tiles: [] });
+  }
+
+  /** Coût de rénovation complète d'un équipement ou d'une route usée. */
+  renovationCost(idx: number): number {
+    const w = this.world;
+    const missing = (100 - w.condition[idx]) / 100;
+    if (w.service[idx]) return Math.round(SERVICE_INFO[w.service[idx] as Exclude<Service, Service.None>].cost * 0.4 * missing);
+    if (w.tiles[idx] === Tile.Road) return Math.round((ROAD_INFO[w.roadType[idx] as RoadType]?.cost ?? ROAD_COST) * 0.8 * missing);
+    return 0;
+  }
+
+  /** Rénove des équipements ou des routes (remise à 100 %). */
+  renovate(tiles: number[]): boolean {
+    const w = this.world;
+    const list = tiles.filter((k) => (w.service[k] || w.tiles[k] === Tile.Road) && w.condition[k] < 99);
+    const cost = list.reduce((a, k) => a + this.renovationCost(k), 0);
+    if (!list.length) return false;
+    if (!this.sandbox && cost > this.money) { this.events.emit('notify', { text: 'Fonds insuffisants pour la rénovation', kind: 'error' }); return false; }
+    for (const k of list) w.condition[k] = 100;
+    this.spend(cost, 'renovation');
+    this.recomputeStats();
+    this.events.emit('roadsChanged', { tiles: [] });
+    this.events.emit('notify', { text: `Rénovation de ${list.length} élément(s) · ${cost.toLocaleString('fr-FR')} €`, kind: 'info' });
+    return true;
+  }
+
+  /** Routes en mauvais état (moins de 50 %). */
+  wornRoads(): number[] {
+    const w = this.world, out: number[] = [];
+    for (let k = 0; k < w.tiles.length; k++) if (w.tiles[k] === Tile.Road && w.condition[k] < 50) out.push(k);
+    return out;
   }
 
   // ---------- Catastrophes : dégâts et reconstruction ----------
@@ -571,6 +671,7 @@ export class Simulation {
       const lv = this.landValue(idx);
       let c = 0.1 + unemp * 1.1 + (0.5 - lv) * 0.5 - (ut.coverage[idx] & Coverage.Police ? 0.3 : 0) + (unsolved.get(idx) ?? 0) * 0.1;
       if (kindOf(w.zones[idx]) === Zone.Commercial) c += 0.05;
+      c -= this.council.mod('crime');
       c = clamp(c, 0, 1);
       ut.crime[idx] = c;
       sum += c; count++;
@@ -597,7 +698,7 @@ export class Simulation {
     const tiles = w.lotTiles(anchor);
     const id = fresh ? this.nextBuildingId++ : w.bId[anchor];
     const variant = fresh || this.rand() < 0.5 ? Math.floor(this.rand() * MODEL_VARIANTS) : w.bVariant[anchor];
-    const timer = 5 + Math.floor(this.rand() * 6) + level * 3 + (tiles.length > 1 ? 3 : 0);
+    const timer = Math.max(2, Math.round((5 + Math.floor(this.rand() * 6) + level * 3 + (tiles.length > 1 ? 3 : 0)) * (1 - this.council.mod('construction'))));
     let trees = false;
     for (const t of tiles) {
       w.bState[t] = BuildState.Construction;
@@ -692,6 +793,9 @@ export class Simulation {
     if (cov & Coverage.Park) v += 0.09;
     v -= this.utilities.nuisance[idx];
     v -= this.utilities.air[idx] * 0.4 + this.utilities.noise[idx] * 0.2 + this.world.soilPol[idx] * 0.3;
+    v += this.council.mod('landValue');
+    if (this.districts.has(idx, 'parking')) v += 0.02;
+    if (this.districts.has(idx, 'transit')) v += 0.03;
     return clamp(v, 0, 1);
   }
 
@@ -737,6 +841,16 @@ export class Simulation {
 
   /** Qualité du terrain pour un nouveau bâtiment (0 = impossible), selon les nuisances et la valeur foncière (§5). */
   siteScore(idx: number, zone: ZoneId): number {
+    const s0 = this.siteScoreBase(idx, zone);
+    if (!s0) return 0;
+    const d = this.districts;
+    if (!d.allowsIndustry(idx, zone)) return 0;
+    let f = 1 - d.taxMod(idx, kindOf(zone)) * 0.06;
+    if (kindOf(zone) === Zone.Commercial && d.has(idx, 'commerce')) f += 0.3;
+    return s0 * Math.max(0.1, f);
+  }
+
+  private siteScoreBase(idx: number, zone: ZoneId): number {
     const info = ZONE_INFO[zone];
     const ut = this.utilities;
     if (ut.noise[idx] > info.noiseTolerance) return 0;
@@ -876,6 +990,7 @@ export class Simulation {
     this.utilities.happinessOffset = -(this.taxes[Zone.Residential] - DEFAULT_TAX) * 0.012 + this.env.happiness;
     this.utilities.consumptionMul = this.env.consumption(this.monthIndex);
     this.utilities.happinessOffset -= this.disasters.malus;
+    this.utilities.happinessOffset += this.council.mod('happiness');
     this.utilities.offline = this.disasters.offline;
     this.utilities.windFactor = this.env.windFactor;
     this.utilities.solarFactor = this.env.solarFactor(this.monthIndex);
@@ -941,7 +1056,14 @@ export class Simulation {
     expensesBy.loans = this.loans.reduce((sum, l) => sum + l.payment, 0);
     expensesBy.reconstruction = this.repairAccum;
     expensesBy.imports = ps.imported * POWER_IMPORT_PRICE + ws.imported * WATER_IMPORT_PRICE;
-    for (const k in incomeBy) incomeBy[k] = Math.round(incomeBy[k] * (k === 'tickets' || k === 'energy' || k === 'recycling' ? 1 : this.incomeMul));
+    // Entretien du patrimoine (routes et équipements) et politiques de quartier
+    let svcUpkeep = 0;
+    for (let k = 0; k < w.service.length; k++) if (w.service[k]) svcUpkeep += SERVICE_INFO[w.service[k] as Exclude<Service, Service.None>].upkeep;
+    expensesBy.maintenance = (this.roadCount * 1.2 + svcUpkeep * 0.12) * (this.budgets.maintenance / 100);
+    const pol = this.districts.budget();
+    expensesBy.policies = pol.cost;
+    incomeBy.fees = pol.income;
+    for (const k in incomeBy) incomeBy[k] = Math.round(incomeBy[k] * (k === 'tickets' || k === 'energy' || k === 'recycling' || k === 'fees' ? 1 : this.incomeMul));
     for (const k in expensesBy) expensesBy[k] = Math.round(expensesBy[k]);
     const income = Object.values(incomeBy).reduce((a, b) => a + b, 0);
     const expenses = Object.values(expensesBy).reduce((a, b) => a + b, 0);
@@ -971,6 +1093,7 @@ export class Simulation {
     void us;
     this.society.monthly();
     this.waste.monthly();
+    this.council.monthly();
     this.syncDemographics();
     this.popAtMonthStart = this.stats.population;
     this.accumulateSoil();
@@ -988,6 +1111,13 @@ export class Simulation {
     if (this.money < 0) this.events.emit('notify', { text: 'Le budget municipal est dans le rouge : augmentez les impôts ou réduisez les dépenses', kind: 'error' });
     if (this.stats.unemployment > 0.15 && this.stats.population > 200) this.events.emit('notify', { text: `Le chômage atteint ${Math.round(this.stats.unemployment * 100)} % : zonez des commerces, industries ou bureaux`, kind: 'warn' });
     const net = this.stats.income - this.stats.expenses;
+    const investTotal = Object.entries(this.investMonth).filter(([k]) => k !== 'debt').reduce((a, [, v]) => a + v, 0);
+    this.ledger.push({
+      month: this.monthIndex, incomeBy: { ...this.stats.incomeBy }, expensesBy: { ...this.stats.expensesBy }, invest: { ...this.investMonth },
+      income: this.stats.income, expenses: this.stats.expenses, investTotal: Math.round(investTotal), debt: Math.round(this.debt), money: Math.round(this.money + net),
+    });
+    if (this.ledger.length > 60) this.ledger.shift();
+    this.investMonth = {};
     this.repairLastMonth = this.repairAccum;
     this.repairAccum = 0;
     if (net !== 0 && !this.sandbox) {
@@ -996,10 +1126,17 @@ export class Simulation {
     }
   }
 
-  private spend(amount: number): void {
+  /** Dépense ponctuelle, comptée comme investissement du mois (sauf remboursement de dette). */
+  private spend(amount: number, category = 'other'): void {
+    if (amount > 0) this.investMonth[category] = (this.investMonth[category] ?? 0) + amount;
     if (this.sandbox) return;
     this.money -= amount;
     this.events.emit('moneyChanged', this.money);
+  }
+
+  /** Investissement décidé hors construction (projets du conseil, rénovations). */
+  payInvestment(amount: number, category: string): void {
+    this.spend(amount, category);
   }
 
   private zonedTiles(): number[] {
@@ -1077,7 +1214,7 @@ export class Simulation {
     const removedBuildings: number[] = [];
     let added = 0;
     for (const idx of est.valid) {
-      if (w.tiles[idx] !== Tile.Road) added++;
+      if (w.tiles[idx] !== Tile.Road) { added++; w.condition[idx] = 100; }
       w.tiles[idx] = Tile.Road;
       w.roadType[idx] = type;
       if (type === RoadType.Pedestrian || type === RoadType.Highway) w.busStop[idx] = type === RoadType.Highway ? 0 : w.busStop[idx];
@@ -1103,7 +1240,7 @@ export class Simulation {
     }
     if (graded) this.events.emit('terrainChanged', undefined);
     this.roadCount += added;
-    this.spend(est.cost);
+    this.spend(est.cost, 'roads');
     this.updateAutoLights(path);
     this.onRoadsChanged(est.valid);
     if (treesRemoved) this.events.emit('treesChanged', undefined);
@@ -1181,7 +1318,7 @@ export class Simulation {
     const j = (z: Zone) => jobsOf[z] ?? 0;
     const happy = population ? us.happiness : 0.6;
     // Attrait touristique : parcs, eau, bonheur, sécurité
-    this.tourismAppeal = clamp((us.coverage[Coverage.Park] ?? 0) * 0.5 + (happy - 0.4) * 0.8 + (1 - this.crimeIndex) * 0.2 + Math.min(0.2, population / 20000), 0, 1);
+    this.tourismAppeal = clamp(this.council.mod('tourism') + (us.coverage[Coverage.Park] ?? 0) * 0.5 + (happy - 0.4) * 0.8 + (1 - this.crimeIndex) * 0.2 + Math.min(0.2, population / 20000), 0, 1);
     const bs = soc.stats;
     const d: Record<number, number> = {};
     d[Zone.ResidentialLow] = demand[Zone.Residential] + 0.05;
@@ -1277,7 +1414,8 @@ export class Simulation {
     this.clearBuilding(idx);
     if (w.trees[idx]) { w.trees[idx] = 0; this.events.emit('treesChanged', undefined); }
     w.service[idx] = type;
-    this.spend(est.cost);
+    w.condition[idx] = 100;
+    this.spend(est.cost, 'services');
     this.recomputeStats();
     this.events.emit('servicesChanged', undefined);
     this.events.emit('zonesChanged', undefined);
@@ -1296,7 +1434,7 @@ export class Simulation {
     if (w.busStop[idx]) return false;
     if (this.money < BUS_STOP_COST) { this.events.emit('notify', { text: 'Fonds insuffisants', kind: 'error' }); return false; }
     w.busStop[idx] = 1;
-    this.spend(BUS_STOP_COST);
+    this.spend(BUS_STOP_COST, 'transport');
     this.events.emit('transitChanged', undefined);
     return true;
   }
@@ -1358,7 +1496,7 @@ export class Simulation {
           if (w.tiles[k] || w.service[k] || w.bState[k] || w.isWater(i, j) || w.trees[k] >= 3) continue;
           if (this.money < cost) break;
           w.trees[k] = Math.min(3, w.trees[k] + 1);
-          this.spend(cost);
+          this.spend(cost, 'terrain');
           changed++;
         }
       }
@@ -1392,7 +1530,7 @@ export class Simulation {
       return false;
     }
     for (const [k, v] of next) w.heights[k] = v;
-    this.spend(next.size * cost);
+    this.spend(next.size * cost, 'terrain');
     // Les cases devenues aquatiques perdent arbres et zones
     let trees = false, zones = false;
     for (let j = Math.max(0, Math.floor(z - radius) - 1); j < Math.min(n, Math.ceil(z + radius) + 1); j++) {
@@ -1408,6 +1546,16 @@ export class Simulation {
     if (trees) this.events.emit('treesChanged', undefined);
     if (zones) this.events.emit('zonesChanged', undefined);
     return true;
+  }
+
+  // ---------- Quartiers ----------
+
+  /** Peint des cases dans un quartier (id 0 = retirer, -1 = nouveau quartier). Renvoie l'id utilisé. */
+  paintDistrict(tiles: number[], id: number): number {
+    if (id < 0) id = this.districts.create().id;
+    const n = this.districts.paint(tiles, id);
+    if (n || id) { this.recomputeStats(); this.events.emit('districtsChanged', undefined); }
+    return id;
   }
 
   // ---------- Lignes haute tension ----------
@@ -1433,7 +1581,7 @@ export class Simulation {
     if (!est.valid.length) return false;
     if (!this.sandbox && est.cost > this.money) { this.events.emit('notify', { text: 'Fonds insuffisants', kind: 'error' }); return false; }
     for (const k of est.valid) this.world.powerLine[k] = 1;
-    this.spend(est.cost);
+    this.spend(est.cost, 'utilities');
     this.recomputeStats();
     this.events.emit('powerLinesChanged', undefined);
     return true;
@@ -1553,7 +1701,7 @@ export class Simulation {
     const est = this.estimatePlace(spec, i, j, face);
     if (!est.ok) { this.events.emit('notify', { text: est.reasons[0], kind: 'warn' }); return false; }
     this.build(spec, est, keep, keep ? 2 : 4);
-    this.spend(est.cost);
+    this.spend(est.cost, 'buildings');
     this.events.emit('notify', { text: `${ZONE_INFO[spec.zone].name} posé (${est.rect[2]}×${est.rect[3]} cases)`, kind: 'info', tile: est.tiles[0] });
     return true;
   }
@@ -1637,7 +1785,8 @@ export class Simulation {
       if (w.zones[to]) { w.zones[to] = Zone.None; this.zonedDirty = true; }
       if (w.trees[to]) { w.trees[to] = 0; this.events.emit('treesChanged', undefined); }
       w.service[to] = svc;
-      this.spend(est.cost);
+      w.condition[to] = w.condition[from];
+      this.spend(est.cost, 'services');
       this.transit.refreshAll();
       this.recomputeStats();
       this.events.emit('servicesChanged', undefined);
@@ -1651,7 +1800,7 @@ export class Simulation {
     const old = this.clearBuilding(a);
     for (const t of old) w.zones[t] = Zone.None;
     this.build(spec, est, keep, 2);
-    this.spend(est.cost);
+    this.spend(est.cost, 'buildings');
     this.events.emit('buildingsChanged', { tiles: old });
     this.events.emit('notify', { text: 'Bâtiment déplacé : les occupants reviendront après le chantier', kind: 'info', tile: est.tiles[0] });
     return true;
@@ -1668,7 +1817,7 @@ export class Simulation {
     const cost = this.upgradeCost(a);
     if (!this.sandbox && cost > this.money) return fail('Fonds insuffisants');
     const tiles = this.startConstruction(a, w.bLevel[a] + 1);
-    this.spend(cost);
+    this.spend(cost, 'buildings');
     this.recomputeStats();
     this.events.emit('buildingsChanged', { tiles });
     return true;
@@ -1755,7 +1904,7 @@ export class Simulation {
       }
     }
     this.roadCount -= roads.length;
-    this.spend(est.cost - est.refund);
+    this.spend(est.cost - est.refund, 'demolition');
     if (roads.length) this.updateAutoLights(roads);
     if (roads.length) this.onRoadsChanged(roads);
     if (buildings.length) {

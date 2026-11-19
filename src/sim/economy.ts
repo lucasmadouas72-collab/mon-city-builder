@@ -6,7 +6,7 @@ export const DEFAULT_TAX = 9;
 export const MIN_TAX = 0;
 export const MAX_TAX = 29;
 
-export const BUDGET_KEYS: BudgetKey[] = ['utilities', 'health', 'education', 'police', 'fire', 'parks', 'transport'];
+export const BUDGET_KEYS: BudgetKey[] = ['utilities', 'health', 'education', 'police', 'fire', 'parks', 'transport', 'maintenance'];
 export const BUDGET_NAMES: Record<BudgetKey, string> = {
   utilities: 'Réseaux',
   health: 'Santé',
@@ -15,6 +15,7 @@ export const BUDGET_NAMES: Record<BudgetKey, string> = {
   fire: 'Pompiers',
   parks: 'Parcs',
   transport: 'Transports',
+  maintenance: 'Entretien du patrimoine',
 };
 
 export interface LoanOffer {
@@ -37,6 +38,32 @@ export interface Loan {
   months: number;
   remaining: number;
   payment: number;
+  /** Mois de souscription. */
+  takenAt?: number;
+}
+
+/** Pénalité de remboursement anticipé (part du capital restant dû). */
+export const EARLY_REPAY_PENALTY = 0.02;
+
+export interface ScheduleRow { month: number; payment: number; interest: number; principal: number; balance: number }
+
+/** Échéancier d'un emprunt à taux fixe (mensualités constantes). */
+export function loanSchedule(o: LoanOffer): ScheduleRow[] {
+  const r = o.rate / 100 / 12, pay = loanPayment(o);
+  let bal = o.amount;
+  const rows: ScheduleRow[] = [];
+  for (let m = 1; m <= o.months; m++) {
+    const interest = bal * r;
+    const principal = m === o.months ? bal : Math.min(bal, pay - interest);
+    bal = Math.max(0, bal - principal);
+    rows.push({ month: m, payment: m === o.months ? principal + interest : pay, interest, principal, balance: bal });
+  }
+  return rows;
+}
+
+/** Coût total des intérêts d'une offre. */
+export function loanInterest(o: LoanOffer): number {
+  return loanPayment(o) * o.months - o.amount;
 }
 
 /** Mensualité d'un emprunt à taux fixe. */

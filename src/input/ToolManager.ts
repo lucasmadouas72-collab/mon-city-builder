@@ -20,7 +20,7 @@ export const ROAD_TOOL: Partial<Record<string, RoadType>> = {
   road: RoadType.Street, avenue: RoadType.Avenue, highway: RoadType.Highway, pedestrian: RoadType.Pedestrian,
 };
 
-export type ToolId = 'select' | 'road' | 'avenue' | 'highway' | 'pedestrian' | 'oneway' | 'lights' | `zone${number}` | 'place' | 'move' | 'powerline' | 'dezone' | 'bulldoze' | 'busstop' | 'busline' | 'metroline' | 'tUp' | 'tDown' | 'tSmooth' | 'tFlat' | 'tTrees' | `svc${number}`;
+export type ToolId = 'select' | 'road' | 'avenue' | 'highway' | 'pedestrian' | 'oneway' | 'lights' | `zone${number}` | 'place' | 'move' | 'powerline' | 'district' | 'undistrict' | 'dezone' | 'bulldoze' | 'busstop' | 'busline' | 'metroline' | 'tUp' | 'tDown' | 'tSmooth' | 'tFlat' | 'tTrees' | `svc${number}`;
 
 const TERRAIN_MODE = { tUp: 'up', tDown: 'down', tSmooth: 'smooth', tFlat: 'flat', tTrees: 'trees' } as const;
 
@@ -79,6 +79,9 @@ export class ToolManager {
   placeSpec: BuildingSpec = { zone: Zone.ResidentialLow, level: 1, front: 1, depth: 1, style: 0 };
   /** Orientation imposée de l'aperçu (0 = automatique, vers la route). */
   placeFace = 0;
+  /** Quartier en cours de tracé (-1 = en créer un nouveau au prochain tracé). */
+  districtId = -1;
+  onDistrict?: (id: number) => void;
   /** Bâtiment en cours de déplacement (outil Déplacer). */
   moveFrom: number | null = null;
   /** Bâtiment sélectionné (fiche ouverte). */
@@ -418,6 +421,8 @@ export class ToolManager {
         if (ROAD_TOOL[this.tool]) this.sim.buildRoads(tiles, ROAD_TOOL[this.tool]);
         else if (this.tool === 'oneway') this.sim.setOneway(tiles);
         else if (this.tool === 'powerline') this.sim.buildPowerLine(tiles);
+        else if (this.tool === 'district') { this.districtId = this.sim.paintDistrict(tiles, this.districtId); this.onDistrict?.(this.districtId); }
+        else if (this.tool === 'undistrict') this.sim.paintDistrict(tiles, 0);
         else if (this.tool === 'lights') this.sim.toggleLights(tiles[tiles.length - 1]);
         else if (this.tool === 'bulldoze') this.sim.bulldoze(tiles);
         else if (zone !== undefined) this.sim.applyZone(tiles, zone);
@@ -441,7 +446,7 @@ export class ToolManager {
       return rasterize(sampleLine(a, b), w);
     } else if (this.tool === 'oneway') {
       return this.alongRoads(w.index(start.i, start.j), w.index(end.i, end.j));
-    } else if (this.tool === 'bulldoze' || TOOL_ZONE[this.tool] !== undefined) {
+    } else if (this.tool === 'bulldoze' || this.tool === 'district' || this.tool === 'undistrict' || TOOL_ZONE[this.tool] !== undefined) {
       const [i0, i1] = [Math.min(start.i, end.i), Math.max(start.i, end.i)];
       const [j0, j1] = [Math.min(start.j, end.j), Math.max(start.j, end.j)];
       for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) out.push(w.index(i, j));
@@ -498,6 +503,11 @@ export class ToolManager {
             : { text: est.reasons.join(' · '), kind: 'bad' };
         }
       }
+    } else if (this.tool === 'district' || this.tool === 'undistrict') {
+      const d = this.sim.districts.get(this.districtId);
+      ov.set([[tiles, this.tool === 'district' ? (d ? new THREE.Color(d.color) : OverlayColor.valid) : OverlayColor.demolish]]);
+      this.tip = this.tool === 'undistrict' ? { text: `Retirer ${tiles.length} case(s) de leur quartier`, kind: 'info' }
+        : { text: d ? `Quartier « ${d.name} » · ${tiles.length} case(s) · glissez pour l’agrandir` : `Nouveau quartier · ${tiles.length} case(s)`, kind: 'ok' };
     } else if (this.tool === 'powerline') {
       const est = this.sim.estimatePowerLine(tiles);
       const bad = est.invalid.length > 0 || est.cost > this.sim.money;

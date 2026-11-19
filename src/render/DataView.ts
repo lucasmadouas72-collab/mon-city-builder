@@ -6,7 +6,7 @@ import { Overlay } from './Overlay';
 
 export type ViewMode =
   | 'none' | 'traffic' | 'power' | 'water' | 'sewage' | 'garbage'
-  | 'health' | 'education' | 'police' | 'fire' | 'park' | 'happiness' | 'land' | 'transport' | 'air' | 'noise' | 'crime' | 'waterPol' | 'soil' | 'light' | 'damage' | 'risk' | 'rent' | 'occupancy' | 'resources';
+  | 'health' | 'education' | 'police' | 'fire' | 'park' | 'happiness' | 'land' | 'transport' | 'air' | 'noise' | 'crime' | 'waterPol' | 'soil' | 'light' | 'damage' | 'risk' | 'rent' | 'occupancy' | 'resources' | 'condition' | 'districts';
 
 export const VIEW_LABELS: Array<[ViewMode, string]> = [
   ['traffic', 'Trafic'],
@@ -33,6 +33,8 @@ export const VIEW_LABELS: Array<[ViewMode, string]> = [
   ['rent', 'Loyers'],
   ['occupancy', 'Occupation des bâtiments'],
   ['resources', 'Ressources naturelles'],
+  ['condition', 'État des routes et équipements'],
+  ['districts', 'Quartiers'],
 ];
 
 const UTIL: Partial<Record<ViewMode, [Utility, Service[]]>> = {
@@ -73,6 +75,8 @@ const LEGENDS: Record<Exclude<ViewMode, 'none'>, Legend> = {
   water: { title: 'Eau potable', unit: 'raccordement, pression et qualité', items: [['#ffffff', 'Pompage, traitement, château d’eau'], ['#22c55e', 'Alimenté'], ['#facc15', 'Basse pression'], ['#a855f7', 'Eau contaminée'], ['#ef4444', 'Sans eau']], explanation: 'Captage, traitement, stockage puis distribution : chaque étape limite le débit. Loin d’une station ou d’un château d’eau, la pression baisse.' },
   sewage: { title: 'Égouts', unit: 'raccordement', items: [['#ffffff', 'Station d’épuration'], ['#22c55e', 'Raccordé'], ['#ef4444', 'Non raccordé']], explanation: 'Sans épuration, les immeubles ne peuvent pas passer au niveau 3.' },
   garbage: { title: 'Déchets', unit: 'jours d’accumulation', items: [['#ffffff', 'Centre de traitement ou dépôt'], ['#22c55e', 'Collecté récemment'], ['#facc15', '5 à 10 jours'], ['#f97316', 'Plus de 10 jours'], ['#ef4444', 'Plus de 20 jours']], explanation: 'Les camions partent des centres et collectent autour des quartiers les plus chargés. Les déchets accumulés réduisent le bonheur.' },
+  condition: { title: 'État du patrimoine', unit: '0 à 100 %', items: [['#22c55e', 'Bon (> 75 %)'], ['#a3e635', 'Correct'], ['#facc15', 'Usé (< 50 %) : ralentit'], ['#f97316', 'Très usé'], ['#ef4444', 'Hors d’usage (< 20 %) : pannes']], explanation: 'Le trafic use les routes, le temps use les équipements. Le budget « Entretien du patrimoine » compense l’usure ; sous 50 %, les routes ralentissent et les équipements produisent moins.' },
+  districts: { title: 'Quartiers', unit: 'limites et politiques', items: [['#ffffff', 'Chaque couleur est un quartier']], explanation: 'Tracez les quartiers avec le menu Quartiers, puis appliquez-leur des politiques et des impôts locaux.' },
   resources: { title: 'Ressources naturelles', unit: 'terres et gisements', items: [['#a3a33a', 'Terres fertiles (agriculture ×1,3)'], ['#78716c', 'Gisement de minerai (extraction)'], ['#166534', 'Forêt (sylviculture)']], explanation: 'Zonez l’agriculture sur les terres fertiles, l’extraction sur les gisements et la sylviculture près des forêts. Le potentiel éolien, solaire et hydraulique est dans le panneau Réseaux.' },
   health: COVERED_BY('Santé', SERVICE_INFO[Service.Clinic].color, 'Chaque clinique accueille un nombre limité de patients. Les malades vont à la clinique accessible la plus proche qui a de la place.'),
   education: COVERED_BY('Éducation', SERVICE_INFO[Service.School].color, 'Chaque école a un nombre de places limité. Les élèves sont affectés selon leur âge, la distance et les places disponibles.'),
@@ -166,6 +170,11 @@ export class DataView {
       const built = w.bState[idx] === BuildState.Built;
       if (m === 'traffic') {
         if (w.tiles[idx] === 1) add(TRAFFIC_LEVELS.find(([max]) => this.sim.traffic.density[idx] < max)![1], idx);
+      } else if (m === 'condition') {
+        if (w.tiles[idx] === 1 || w.service[idx]) { const c = w.condition[idx]; add(c > 75 ? '#22c55e' : c > 60 ? '#a3e635' : c > 40 ? '#facc15' : c > 20 ? '#f97316' : '#ef4444', idx); }
+      } else if (m === 'districts') {
+        const d = this.sim.districts.get(w.district[idx]);
+        if (d) add(d.color, idx);
       } else if (m === 'resources') {
         const r = w.resources[idx];
         if (r & 2) add('#78716c', idx);

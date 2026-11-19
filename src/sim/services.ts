@@ -60,7 +60,7 @@ export const COVERAGE_NAMES: Record<number, string> = {
 export type ServiceCategory = 'utilities' | 'services' | 'transport';
 
 /** Postes budgétaires réglables (50 % à 150 %). */
-export type BudgetKey = 'utilities' | 'health' | 'education' | 'police' | 'fire' | 'parks' | 'transport';
+export type BudgetKey = 'utilities' | 'health' | 'education' | 'police' | 'fire' | 'parks' | 'transport' | 'maintenance';
 
 export interface ServiceInfo {
   name: string;

@@ -72,7 +72,8 @@ export class Waste {
   dailyOf(k: number): number {
     const c = this.sim.society.citizens;
     const z = this.sim.world.zones[k];
-    return c.residents[k] * PER_RESIDENT + c.employees[k] * PER_JOB * (kindOf(z) === Zone.Industrial ? 1.6 : 1);
+    const less = (this.sim.districts.has(k, 'recycling') ? 0.2 : 0) + this.sim.council.mod('garbage');
+    return (c.residents[k] * PER_RESIDENT + c.employees[k] * PER_JOB * (kindOf(z) === Zone.Industrial ? 1.6 : 1)) * Math.max(0.3, 1 - less);
   }
 
   /** Niveau d'accumulation en jours de production. */

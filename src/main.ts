@@ -11,6 +11,7 @@ import { Atmosphere } from './render/Atmosphere';
 import { TrafficLights } from './render/TrafficLights';
 import { DisasterView } from './render/DisasterView';
 import { PowerLines } from './render/PowerLines';
+import { DistrictLabels } from './render/DistrictLabels';
 import { DisasterPanel } from './ui/DisasterPanel';
 import { Simulation } from './sim/Simulation';
 import { World } from './sim/World';
@@ -60,6 +61,9 @@ function startGame(config: GameConfig, file?: SaveFile): void {
   const powerLines = new PowerLines(world);
   view.scene.add(powerLines.group);
   sim.events.on('powerLinesChanged', () => powerLines.rebuild());
+  const districtLabels = new DistrictLabels(sim);
+  view.scene.add(districtLabels.group);
+  sim.events.on('districtsChanged', () => districtLabels.rebuild());
   view.scene.add(disasterView.group);
   disasterView.refreshFlood();
   sim.events.on('shake', ({ strength }) => cam.shake(strength));
@@ -170,6 +174,7 @@ function startGame(config: GameConfig, file?: SaveFile): void {
     dataView.update(now / 1000);
     services.update(now / 1000);
     disasterView.update(now / 1000);
+    districtLabels.group.visible = dataView.mode === 'districts' || tools.tool === 'district' || tools.tool === 'undistrict';
     transitView.visible = dataView.mode === 'transport' || tools.tool === 'busline' || tools.tool === 'metroline' || tools.tool === 'busstop';
     atmosphere.update(sim.env, sim.monthIndex, Math.min(dt, 0.1), now / 1000);
     view.trees.setSeason(sim.env.season(sim.monthIndex));
