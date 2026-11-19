@@ -14,6 +14,7 @@ import { World } from './sim/World';
 import { UndoStack } from './sim/Undo';
 import { applySave, parseSave, serialize, worldFromSave, type SaveFile } from './sim/save';
 import { Hud } from './ui/Hud';
+import * as roadGeometry from './sim/roadGeometry';
 import { GameMenu, showMainMenu } from './ui/Menu';
 import type { GameConfig } from './game/config';
 import { readSave, setBoot, takeBoot, writeSave, type Boot } from './game/storage';
@@ -57,6 +58,17 @@ function startGame(config: GameConfig, file?: SaveFile): void {
   const hud = new Hud(document.getElementById('hud')!, sim, tools, dataView);
   hud.focus = (x, z) => cam.focus(x, z);
   hud.bindUndo(undo);
+  // Caméra : F = centrer sur la case survolée, V = vue de dessus, Retour arrière = vue précédente,
+  // Alt + 1 à 4 = mémoriser une position, Maj + 1 à 4 = la rappeler
+  window.addEventListener('keydown', (e) => {
+    if ((e.target as HTMLElement).tagName === 'INPUT') return;
+    if (e.code === 'KeyF' && tools.hovered) cam.focus(tools.hovered.i + 0.5, tools.hovered.j + 0.5);
+    if (e.code === 'KeyV' && !e.ctrlKey) cam.toggleTopView();
+    if (e.code === 'Backspace') { e.preventDefault(); cam.back(); }
+    const m = /^Digit([1-4])$/.exec(e.code);
+    if (m && e.altKey) { e.preventDefault(); cam.savePosition(Number(m[1]) - 1); sim.events.emit('notify', { text: `Position de caméra ${m[1]} mémorisée (Maj + ${m[1]} pour y revenir)`, kind: 'info' }); }
+    if (m && e.shiftKey && !cam.recallPosition(Number(m[1]) - 1)) sim.events.emit('notify', { text: `Aucune position ${m[1]} : mémorisez-la avec Alt + ${m[1]}`, kind: 'warn' });
+  });
   tools.setTool(file ? 'select' : 'road');
 
   // ----- Sauvegardes -----
@@ -148,7 +160,7 @@ function startGame(config: GameConfig, file?: SaveFile): void {
   if (!file) sim.events.emit('notify', { text: `Bienvenue à ${config.cityName} ! Commencez par tracer une route.`, kind: 'info' });
 
   // Accès console pour le débogage
-  Object.assign(window, { game: { world, sim, view, cam, tools, trafficView, dataView, services, transitView, atmosphere, undo } });
+  Object.assign(window, { game: { world, sim, view, cam, tools, trafficView, dataView, services, transitView, atmosphere, undo }, __geo: roadGeometry });
 }
 
 async function loadAndStart(data: string | null): Promise<boolean> {

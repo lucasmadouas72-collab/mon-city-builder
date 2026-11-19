@@ -39,3 +39,13 @@ export const BRIDGE_COST_MUL = 5;
 export const BRIDGE_Y = 0.45;
 /** Durée d'une phase de feu (secondes simulées). */
 export const LIGHT_PHASE = 4;
+
+/** 8 directions : N, NE, E, SE, S, SO, O, NO (bit = 1 << index). */
+export const DIRS8: ReadonlyArray<readonly [number, number]> = [[0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1]];
+export const DIR_NAMES = ['nord', 'nord-est', 'est', 'sud-est', 'sud', 'sud-ouest', 'ouest', 'nord-ouest'];
+
+/** Indice de direction (0 à 7) pour un déplacement (dx, dz) unitaire, ou -1. */
+export function dirIndex(dx: number, dz: number): number {
+  for (let k = 0; k < 8; k++) if (DIRS8[k][0] === dx && DIRS8[k][1] === dz) return k;
+  return -1;
+}

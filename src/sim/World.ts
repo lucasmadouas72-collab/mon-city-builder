@@ -2,7 +2,7 @@ import { MAP_SIZE, MAX_ROAD_SLOPE, SEA_LEVEL } from '../config';
 import { fbm, rng } from '../core/noise';
 import { MAX_BUILD_SLOPE, ZONE_DEPTH } from './zones';
 import { SERVICE_INFO, type Service } from './services';
-import { BRIDGE_Y, RoadType } from './roads';
+import { BRIDGE_Y, DIRS8, RoadType, dirIndex } from './roads';
 
 export type MapType = 'river' | 'plain' | 'mountain' | 'valley' | 'coast' | 'island' | 'archipelago' | 'forest' | 'desert' | 'hills';
 
@@ -55,8 +55,10 @@ export class World {
   readonly busStop: Uint8Array;
   /** Famille de voie (RoadType) des cases de route. */
   readonly roadType: Uint8Array;
-  /** Sens unique : 0 = double sens, sinon direction imposée (bit N/E/S/W). */
+  /** Sens unique : 0 = double sens, sinon indice de direction imposée + 1 (1 à 8). */
   readonly oneway: Uint8Array;
+  /** Liaisons routières vers les 8 cases voisines (bit = 1 << indice de direction). */
+  readonly links: Uint8Array;
   /** Feux tricolores sur un carrefour. */
   readonly lights: Uint8Array;
 
@@ -80,6 +82,7 @@ export class World {
     this.roadType = new Uint8Array(n * n);
     this.oneway = new Uint8Array(n * n);
     this.lights = new Uint8Array(n * n);
+    this.links = new Uint8Array(n * n);
     if (generate) this.generate();
   }
 
@@ -91,9 +94,9 @@ export class World {
     let queue: number[] = [];
     // Les autoroutes ne desservent pas les parcelles
     for (let k = 0; k < n * n; k++) {
-      if (this.tiles[k] !== Tile.Road) continue;
+      if (this.tiles[k] !== Tile.Road || this.roadType[k] === RoadType.Highway) continue;
       dist[k] = 0;
-      if (this.roadType[k] !== RoadType.Highway) queue.push(k);
+      queue.push(k);
     }
     for (let d = 1; d <= ZONE_DEPTH + 1 && queue.length; d++) {
       const next: number[] = [];
@@ -286,6 +289,55 @@ export class World {
     const [lo, hi] = this.tileMinMax(i, j);
     if (hi - lo > MAX_ROAD_SLOPE) return 'Terrain trop pentu : lissez-le avec le menu Terrain';
     return null;
+  }
+
+  // ---------- Graphe routier (8 directions) ----------
+
+  /** Relie deux cases de route voisines (y compris en diagonale). */
+  connect(a: number, b: number): void {
+    const n = this.size;
+    const ai = a % n, bi = b % n;
+    const d = dirIndex(bi - ai, (b - bi) / n - (a - ai) / n);
+    if (d < 0) return;
+    this.links[a] |= 1 << d;
+    this.links[b] |= 1 << ((d + 4) % 8);
+  }
+
+  /** Supprime toutes les liaisons d'une case. */
+  disconnect(k: number): void {
+    const n = this.size;
+    const i = k % n, j = (k - i) / n;
+    for (let d = 0; d < 8; d++) {
+      if (!(this.links[k] & (1 << d))) continue;
+      const a = i + DIRS8[d][0], b = j + DIRS8[d][1];
+      if (this.inBounds(a, b)) this.links[b * n + a] &= ~(1 << ((d + 4) % 8));
+    }
+    this.links[k] = 0;
+  }
+
+  /** Cases reliées à une case de route. */
+  neighbors(k: number): number[] {
+    const n = this.size, out: number[] = [];
+    const i = k % n, j = (k - i) / n, l = this.links[k];
+    for (let d = 0; d < 8; d++) if (l & (1 << d)) out.push((j + DIRS8[d][1]) * n + i + DIRS8[d][0]);
+    return out;
+  }
+
+  linkCount(k: number): number {
+    let l = this.links[k], c = 0;
+    while (l) { c += l & 1; l >>= 1; }
+    return c;
+  }
+
+  /** Anciennes sauvegardes : reconstruit les liaisons à partir des cases de route adjacentes. */
+  deriveLinks(): void {
+    const n = this.size;
+    for (let k = 0; k < this.tiles.length; k++) {
+      if (this.tiles[k] !== Tile.Road) continue;
+      const i = k % n, j = (k - i) / n;
+      if (this.isRoad(i + 1, j)) this.connect(k, k + 1);
+      if (this.isRoad(i, j + 1)) this.connect(k, k + n);
+    }
   }
 
   /** Hauteur de la chaussée : suit le relief, mais reste au-dessus de l'eau (ponts). */

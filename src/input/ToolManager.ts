@@ -8,6 +8,10 @@ import { SERVICE_INFO, Service as Svc, type Service } from '../sim/services';
 import { BUS_STOP_COST } from '../sim/economy';
 import type { UndoStack } from '../sim/Undo';
 import { ROAD_INFO, RoadType } from '../sim/roads';
+import { gridPath, rasterize, sampleCurve, sampleLine, type Pt } from '../sim/roadGeometry';
+
+export type RoadMode = 'straight' | 'curve' | 'grid';
+export const ROAD_MODE_NAMES: Record<RoadMode, string> = { straight: 'Droite', curve: 'Courbe', grid: 'En L' };
 
 /** Famille de voie posée par chaque outil de route. */
 export const ROAD_TOOL: Partial<Record<string, RoadType>> = {
@@ -64,6 +68,85 @@ export class ToolManager {
   /** Rayon du pinceau de terrain (en cases). */
   brush = 3;
   private stroke: { end: () => void; flat: number; last: number } | null = null;
+  /** Mode de tracé des routes : droite (tous angles), courbe (3 clics) ou en L. */
+  roadMode: RoadMode = 'straight';
+  onRoadMode?: (m: RoadMode) => void;
+  /** Points déjà posés pour une route courbe (départ, puis point de contrôle). */
+  private curvePts: Pt[] = [];
+  private ghost: THREE.Line;
+
+  setRoadMode(m: RoadMode): void {
+    this.roadMode = m;
+    this.curvePts = [];
+    this.onRoadMode?.(m);
+    this.refresh();
+  }
+
+  private snapCenter(i: number, j: number): Pt {
+    return [i + 0.5, j + 0.5];
+  }
+
+  /** Tracé de route selon le mode (cases reliées) et points de prévisualisation. */
+  private roadPath(start: HoverInfo, end: HoverInfo): { tiles: number[]; points: Pt[] } {
+    const w = this.sim.world;
+    const a = this.snapCenter(start.i, start.j);
+    let b = this.snapCenter(end.i, end.j);
+    if (this.roadMode === 'grid') {
+      const tiles = gridPath(a, b, w);
+      return { tiles, points: tiles.map((t) => this.snapCenter(t % w.size, Math.floor(t / w.size))) };
+    }
+    if (this.roadMode === 'curve' && this.curvePts.length >= 1) {
+      const p0 = this.curvePts[0];
+      if (this.curvePts.length === 1) {
+        const pts = sampleLine(p0, b);
+        return { tiles: rasterize(pts, w), points: pts };
+      }
+      const pts = sampleCurve(p0, this.curvePts[1], b);
+      return { tiles: rasterize(pts, w), points: pts };
+    }
+    // Droite : angle aimanté par pas de 15° (Maj : angle libre)
+    const dx = b[0] - a[0], dz = b[1] - a[1];
+    const len = Math.hypot(dx, dz);
+    if (len > 0 && !this.shift) {
+      const ang = Math.round(Math.atan2(dz, dx) / (Math.PI / 12)) * (Math.PI / 12);
+      b = [a[0] + Math.cos(ang) * len, a[1] + Math.sin(ang) * len];
+    }
+    const pts = sampleLine(a, b);
+    return { tiles: rasterize(pts, w), points: pts };
+  }
+
+  private shift = false;
+
+  /** Ligne fantôme qui montre l'axe exact de la route avant validation. */
+  private showGhost(points: Pt[] | null): void {
+    if (!points || points.length < 2) { this.ghost.visible = false; return; }
+    const w = this.sim.world;
+    const arr = new Float32Array(points.length * 3);
+    points.forEach(([x, z], k) => arr.set([x, w.roadY(x, z) + 0.2, z], k * 3));
+    this.ghost.geometry.dispose();
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+    this.ghost.geometry = g;
+    this.ghost.visible = true;
+  }
+
+  /** Chemin le long des routes existantes (pour poser un sens unique). */
+  private alongRoads(a: number, b: number): number[] {
+    const w = this.sim.world;
+    if (w.tiles[a] !== 1 || w.tiles[b] !== 1) return [a];
+    const came = new Map<number, number>([[a, -1]]);
+    const queue = [a];
+    while (queue.length) {
+      const cur = queue.shift()!;
+      if (cur === b) break;
+      for (const q of w.neighbors(cur)) if (!came.has(q)) { came.set(q, cur); queue.push(q); }
+      if (came.size > 4000) break;
+    }
+    if (!came.has(b)) return [a];
+    const path: number[] = [];
+    for (let k = b; k !== -1; k = came.get(k)!) path.push(k);
+    return path.reverse();
+  }
   private hitPoint = new THREE.Vector3();
 
   private get terrainMode() {
@@ -77,6 +160,7 @@ export class ToolManager {
   private raycaster = new THREE.Raycaster();
   private ndc = new THREE.Vector2();
   private hover: HoverInfo | null = null;
+  get hovered(): HoverInfo | null { return this.hover; }
   private dragStart: HoverInfo | null = null;
   private pointer = { x: 0, y: 0 };
 
@@ -86,6 +170,13 @@ export class ToolManager {
     private cam: CameraController,
     private dom: HTMLElement,
   ) {
+    this.ghost = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.9, depthTest: false }));
+    this.ghost.renderOrder = 30;
+    this.ghost.frustumCulled = false;
+    this.ghost.visible = false;
+    view.overlay.group.add(this.ghost);
+    window.addEventListener('keydown', (e) => { if (e.key === 'Shift') { this.shift = true; this.refresh(); } });
+    window.addEventListener('keyup', (e) => { if (e.key === 'Shift') { this.shift = false; this.refresh(); } });
     dom.addEventListener('pointermove', (e) => this.onMove(e));
     dom.addEventListener('pointerdown', (e) => this.onDown(e));
     window.addEventListener('pointerup', (e) => this.onUp(e));
@@ -93,7 +184,8 @@ export class ToolManager {
     dom.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Escape') {
-        if (this.dragStart) this.cancelDrag();
+        if (this.curvePts.length) { this.curvePts = []; this.refresh(); }
+        else if (this.dragStart) this.cancelDrag();
         else if (this.draft.length) { this.draft = []; this.refresh(); }
         else this.setTool('select');
       }
@@ -136,6 +228,7 @@ export class ToolManager {
 
   setTool(tool: ToolId): void {
     this.draft = [];
+    this.curvePts = [];
     this.tool = tool;
     this.cancelDrag();
     this.cam.setLeftPan(tool === 'select');
@@ -213,6 +306,17 @@ export class ToolManager {
       return;
     }
     if (e.button !== 0 || !this.dragStart) return;
+    // Route courbe : 1er clic = départ, 2e = point de contrôle, 3e = arrivée
+    if (ROAD_TOOL[this.tool] && this.roadMode === 'curve' && this.hover) {
+      const p = this.snapCenter(this.hover.i, this.hover.j);
+      this.dragStart = null;
+      if (this.curvePts.length < 2) { this.curvePts.push(p); this.refresh(); return; }
+      const { tiles } = this.roadPath(this.hover, this.hover);
+      this.act(() => this.sim.buildRoads(tiles, ROAD_TOOL[this.tool]));
+      this.curvePts = [];
+      this.refresh();
+      return;
+    }
     const tiles = this.currentSelection();
     this.dragStart = null;
     if (tiles && this.lineKind) {
@@ -240,15 +344,10 @@ export class ToolManager {
     if (!start || !end) return null;
     const w = this.sim.world;
     const out: number[] = [];
-    if (ROAD_TOOL[this.tool] || this.tool === 'oneway') {
-      // Tracé en L : d'abord l'axe dominant
-      const dx = end.i - start.i, dz = end.j - start.j;
-      const sx = Math.sign(dx), sz = Math.sign(dz);
-      let i = start.i, j = start.j;
-      out.push(w.index(i, j));
-      const stepX = () => { while (i !== end.i) { i += sx; out.push(w.index(i, j)); } };
-      const stepZ = () => { while (j !== end.j) { j += sz; out.push(w.index(i, j)); } };
-      if (Math.abs(dx) >= Math.abs(dz)) { stepX(); stepZ(); } else { stepZ(); stepX(); }
+    if (ROAD_TOOL[this.tool]) {
+      return this.roadPath(start, end).tiles;
+    } else if (this.tool === 'oneway') {
+      return this.alongRoads(w.index(start.i, start.j), w.index(end.i, end.j));
     } else if (this.tool === 'bulldoze' || TOOL_ZONE[this.tool] !== undefined) {
       const [i0, i1] = [Math.min(start.i, end.i), Math.max(start.i, end.i)];
       const [j0, j1] = [Math.min(start.j, end.j), Math.max(start.j, end.j)];
@@ -271,6 +370,7 @@ export class ToolManager {
     const tiles = this.currentSelection();
     this.tip = null;
     if (!this.lineKind) this.onDraft?.(null, []);
+    if (!ROAD_TOOL[this.tool]) this.showGhost(null);
     if (!tiles) {
       ov.clear();
     } else if (this.tool === 'oneway') {
@@ -279,12 +379,23 @@ export class ToolManager {
       this.tip = { text: tiles.length < 2 ? 'Glissez le long d\'une route dans le sens voulu (refaire = double sens)' : `Sens unique sur ${roads.length} case(s)`, kind: 'info' };
     } else if (this.tool === 'lights') {
       const w = this.sim.world, t = tiles[tiles.length - 1];
-      const ok = w.tiles[t] === 1 && w.roadMask(t % w.size, Math.floor(t / w.size)).toString(2).split('1').length - 1 >= 3;
+      const ok = w.tiles[t] === 1 && w.linkCount(t) >= 3;
       ov.set([[[t], ok ? OverlayColor.valid : OverlayColor.invalid]]);
       const on = w.lights[t] === 1 || w.lights[t] === 2;
       this.tip = ok ? { text: on ? 'Cliquez pour retirer les feux' : 'Cliquez pour installer des feux', kind: 'ok' } : { text: 'Choisissez un carrefour', kind: 'bad' };
     } else if (ROAD_TOOL[this.tool]) {
       const type = ROAD_TOOL[this.tool]!;
+      const end = this.hover!;
+      const start = this.dragStart ?? end;
+      const preview = this.roadMode === 'curve' ? this.roadPath(end, end) : this.roadPath(start, end);
+      this.showGhost(this.dragStart || this.curvePts.length ? preview.points : null);
+      if (this.roadMode === 'curve' && this.curvePts.length === 0) {
+        ov.set([[[tiles[tiles.length - 1]], OverlayColor.hover]]);
+        this.tip = { text: 'Courbe : cliquez le point de départ', kind: 'info' };
+        this.updateTooltipPosition();
+        return;
+      }
+      if (this.roadMode === 'curve') tiles.splice(0, tiles.length, ...preview.tiles);
       const est = this.sim.estimateRoads(tiles, type);
       const tooExpensive = est.cost > this.sim.money;
       const blocked = est.invalid.length > 0;
@@ -295,8 +406,9 @@ export class ToolManager {
         const w = this.sim.world;
         const bridges = est.valid.filter((t) => w.isWater(t % w.size, Math.floor(t / w.size))).length;
         const upgrades = est.valid.filter((t) => w.tiles[t] === 1).length;
-        const extra = [bridges ? `${bridges} de pont` : '', upgrades ? `${upgrades} remplacée(s)` : ''].filter(Boolean).join(', ');
-        this.tip = { text: `${ROAD_INFO[type].name} · ${est.valid.length} case(s)${extra ? ` (${extra})` : ''} · ${fmt(est.cost)}`, kind: tooExpensive ? 'bad' : 'ok' };
+        const extra = [bridges ? `${bridges} de pont` : '', upgrades ? `${upgrades} remplacée(s)` : '', est.graded ? `${est.graded} terrassée(s)` : ''].filter(Boolean).join(', ');
+        const step = this.roadMode === 'curve' ? (this.curvePts.length === 1 ? ' · cliquez pour placer le point de courbure' : ' · cliquez pour terminer') : '';
+        this.tip = { text: `${ROAD_INFO[type].name} · ${est.valid.length} case(s)${extra ? ` (${extra})` : ''} · ${fmt(est.cost)}${step}`, kind: tooExpensive ? 'bad' : 'ok' };
       }
     } else if (this.tool === 'bulldoze') {
       const est = this.sim.estimateBulldoze(tiles);

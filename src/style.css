@@ -342,3 +342,9 @@ button.ghost.big:disabled { opacity: 0.4; cursor: default; }
 @media (max-width: 1250px) { .stat:has(#happy), .undo { display: none; } }
 @media (max-width: 1050px) { .stat:has(#balance), .demand, .clock .weather { display: none; } }
 @media (max-width: 760px) { .stat:has(#pop), .views, #stats-btn { display: none; } }
+
+/* ---- Étape 7 : modes de tracé ---- */
+.fly-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.road-modes { display: flex; gap: 2px; background: rgba(255,255,255,0.05); border-radius: 8px; padding: 2px; text-transform: none; letter-spacing: 0; }
+.road-modes button { display: block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.road-modes button.active { background: var(--accent); color: var(--bg-solid); }

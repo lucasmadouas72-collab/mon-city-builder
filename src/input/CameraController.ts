@@ -40,7 +40,51 @@ export class CameraController {
 
   /** Déplace doucement la caméra vers un point de la carte. */
   focus(x: number, z: number): void {
+    this.remember();
     this.focusTarget = new THREE.Vector3(x, 0, z);
+  }
+
+  private history: Array<[THREE.Vector3, THREE.Vector3]> = [];
+  private saved: Array<[THREE.Vector3, THREE.Vector3] | null> = [null, null, null, null];
+  private flyTo: [THREE.Vector3, THREE.Vector3] | null = null;
+
+  private state(): [THREE.Vector3, THREE.Vector3] {
+    return [this.controls.target.clone(), this.camera.position.clone()];
+  }
+
+  private remember(): void {
+    this.history.push(this.state());
+    if (this.history.length > 20) this.history.shift();
+  }
+
+  /** Retour à la vue précédente. */
+  back(): void {
+    const s = this.history.pop();
+    if (s) { this.focusTarget = null; this.flyTo = s; }
+  }
+
+  /** Vue de dessus (bascule). */
+  toggleTopView(): void {
+    const c = this.controls;
+    const off = this.camera.position.clone().sub(c.target);
+    const dist = off.length();
+    const polar = Math.acos(off.y / dist);
+    this.remember();
+    const target = polar > 0.35 ? 0.26 : 0.95;
+    const azim = Math.atan2(off.x, off.z);
+    const pos = c.target.clone().add(new THREE.Vector3(Math.sin(target) * Math.sin(azim), Math.cos(target), Math.sin(target) * Math.cos(azim)).multiplyScalar(dist));
+    this.flyTo = [c.target.clone(), pos];
+  }
+
+  /** Mémorise (Alt + 1 à 4) ou rappelle (Maj + 1 à 4) une position de caméra. */
+  savePosition(k: number): void { this.saved[k] = this.state(); }
+  recallPosition(k: number): boolean {
+    const s = this.saved[k];
+    if (!s) return false;
+    this.remember();
+    this.focusTarget = null;
+    this.flyTo = [s[0].clone(), s[1].clone()];
+    return true;
   }
 
   setLeftPan(enabled: boolean): void {
@@ -76,6 +120,12 @@ export class CameraController {
       this.camera.position.copy(c.target).add(off);
     }
 
+    if (this.flyTo) {
+      const f = Math.min(1, dt * 5);
+      c.target.lerp(this.flyTo[0], f);
+      this.camera.position.lerp(this.flyTo[1], f);
+      if (this.camera.position.distanceTo(this.flyTo[1]) < 0.05) this.flyTo = null;
+    }
     if (this.focusTarget) {
       const step = this.focusTarget.clone().sub(c.target).multiplyScalar(Math.min(1, dt * 5));
       c.target.add(step);

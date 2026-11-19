@@ -22,6 +22,8 @@ Puis ouvrir l'adresse affichée (http://localhost:5173).
 | Zoomer | molette |
 | Déplacer la caméra | clic molette, ou Z Q S D / flèches |
 | Outils | 1 Sélection · 2 Route · 3 Résidentiel · 4 Commercial · 5 Industriel · 6 Bureaux · 7 Dézoner · 8 Démolir |
+| Routes | menu Routes · tracé Droite (aimanté à 15°, Maj = angle libre), Courbe (3 clics : départ, courbure, arrivée) ou En L · touche C pour changer |
+| Caméra | F centrer · V vue de dessus · Retour arrière vue précédente · Alt+1..4 mémoriser · Maj+1..4 rappeler |
 | Zoner | cliquer-glisser une zone près d'une route |
 | Terrain | menu Terrain, cliquer-glisser · taille du pinceau : - et + |
 | Annuler / rétablir | Ctrl+Z / Ctrl+Y |
@@ -48,10 +50,11 @@ Puis ouvrir l'adresse affichée (http://localhost:5173).
 - [x] Phase 4 : réseaux et services publics
 - [x] Phase 5 : économie, bus, métro, paliers
 - [x] Phase 6 : jour/nuit, saisons, météo, pollution, démographie, statistiques, journal, sauvegardes, nouvelle partie, annuler, terrain
+- [x] Étape 7 : routes droites à tous les angles, diagonales et courbes, rues / avenues / autoroutes / voies piétonnes, ponts, terrassement automatique, sens uniques, feux tricolores, remplacement de routes, règle « ne pas bloquer le carrefour », caméra (centrer, vue de dessus, retour, positions mémorisées)
 
 ### Prochaines étapes (cahier des charges)
 
-- [ ] Routes avancées : routes courbes et diagonales, plusieurs gabarits (avenues, autoroutes, échangeurs), ponts, tunnels, sens uniques, feux tricolores
+- [ ] Routes : tunnels, échangeurs dédiés, routes surélevées, pistes cyclables, nombre de voies réglable
 - [ ] Bâtiments sur plusieurs cases, placement manuel et rotation, styles architecturaux
 - [ ] Quartiers nommés avec leurs propres règles et impôts
 - [ ] Tramway, trains, ports, aéroports, taxis, vélos

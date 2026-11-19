@@ -1,11 +1,11 @@
 import { GAME_NAME } from '../config';
 import { BudgetPanel } from './BudgetPanel';
-import { ROAD_INFO, RoadType } from '../sim/roads';
+import { DIR_NAMES, ROAD_INFO, RoadType } from '../sim/roads';
 import { StatsPanel } from './StatsPanel';
 import { companyName, residentsOf } from '../sim/names';
 import { BUS_STOP_COST, BUS_UNLOCK, MILESTONES } from '../sim/economy';
 import { SEASON_NAMES, WEATHER_NAMES } from '../sim/Environment';
-import { fmt, type HoverInfo, type ToolId, type ToolManager, type Tooltip } from '../input/ToolManager';
+import { fmt, ROAD_MODE_NAMES, type HoverInfo, type RoadMode, type ToolId, type ToolManager, type Tooltip } from '../input/ToolManager';
 import type { CityStats, Simulation } from '../sim/Simulation';
 import { TrafficView } from '../render/TrafficView';
 import { VIEW_LABELS, type DataView, type ViewMode } from '../render/DataView';
@@ -182,6 +182,7 @@ export class Hud {
     });
     this.el('#flyout').addEventListener('click', (e) => {
       const b = (e.target as HTMLElement).closest('button');
+      if (b?.dataset.roadmode) { tools.setRoadMode(b.dataset.roadmode as RoadMode); this.renderFlyout(); return; }
       if (b?.dataset.tool) tools.setTool(b.dataset.tool as ToolId);
     });
     this.el('#speeds').addEventListener('click', (e) => {
@@ -229,6 +230,12 @@ export class Hud {
       if ((e.target as HTMLElement).tagName === 'INPUT') return;
       if (e.code === 'KeyT') views.set('traffic');
       if (e.code === 'KeyB') this.budget.toggle();
+      if (e.code === 'KeyC' && !e.ctrlKey && !e.metaKey) {
+        const order: RoadMode[] = ['straight', 'curve', 'grid'];
+        tools.setRoadMode(order[(order.indexOf(tools.roadMode) + 1) % 3]);
+        this.renderFlyout();
+      }
+      if (e.altKey || e.shiftKey || e.ctrlKey || e.metaKey) return;
       const t = KEYED.find((t) => e.code === `Digit${t.key}` || e.code === `Numpad${t.key}`);
       if (t) tools.setTool(t.id);
     });
@@ -263,7 +270,9 @@ export class Hud {
     });
     if (!g) { fly.hidden = true; return; }
     fly.hidden = false;
-    fly.innerHTML = `<div class="fly-title">${g.label}</div>` + g.tools.map((t) => {
+    const modes = g.id === 'roads' ? `<div class="road-modes" role="group" aria-label="Tracé">${(Object.keys(ROAD_MODE_NAMES) as RoadMode[]).map((m) =>
+      `<button data-roadmode="${m}" class="${this.tools.roadMode === m ? 'active' : ''}" title="Touche C pour changer">${ROAD_MODE_NAMES[m]}</button>`).join('')}</div>` : '';
+    fly.innerHTML = `<div class="fly-title">${g.label}${modes}</div>` + g.tools.map((t) => {
       const locked = t.zone ? !this.sim.isUnlocked(t.zone) : t.unlock ? this.sim.maxPop < t.unlock : false;
       const unlockAt = t.zone ? ZONE_INFO[t.zone].unlockPop : t.unlock ?? 0;
       const desc = t.desc ?? t.sub ?? '';
@@ -382,7 +391,7 @@ export class Hud {
       kind = w.isWater(h.i, h.j) ? `Pont · ${info.name}` : info.name;
       const ow = w.oneway[idx];
       extra = `${info.kmh ? `<dt>Vitesse</dt><dd>${info.kmh} km/h</dd>` : '<dt>Accès</dt><dd>Piétons uniquement</dd>'}
-        ${ow ? `<dt>Sens</dt><dd>Unique (${ow === 1 ? 'nord' : ow === 2 ? 'est' : ow === 4 ? 'sud' : 'ouest'})</dd>` : ''}
+        ${ow ? `<dt>Sens</dt><dd>Unique (vers le ${DIR_NAMES[ow - 1]})</dd>` : ''}
         ${w.lights[idx] === 1 || w.lights[idx] === 2 ? '<dt>Carrefour</dt><dd>Feux tricolores</dd>' : ''}
         <dt>Circulation</dt><dd>${TrafficView.label(d)}</dd><dt>Véhicules</dt><dd>${d.toFixed(1)}</dd>`;
     }

@@ -1,6 +1,6 @@
 import { rng } from '../core/noise';
 import type { World } from './World';
-import { LIGHT_PHASE, ROAD_INFO, type RoadType } from './roads';
+import { DIRS8, LIGHT_PHASE, ROAD_INFO, type RoadType } from './roads';
 import { BuildState, Zone } from './zones';
 
 /**
@@ -214,23 +214,24 @@ export class Traffic {
       if (++expansions > MAX_ASTAR) return null;
       const ci = cur % n, cj = (cur - ci) / n;
       const gc = g[cur];
-      for (let d = 0; d < 4; d++) {
-        const a = ci + (d === 1 ? 1 : d === 3 ? -1 : 0);
-        const b = cj + (d === 2 ? 1 : d === 0 ? -1 : 0);
+      const links = w.links[cur];
+      for (let d = 0; d < 8; d++) {
+        if (!(links & (1 << d))) continue;
+        const a = ci + DIRS8[d][0], b = cj + DIRS8[d][1];
         if (a < 0 || b < 0 || a >= n || b >= n) continue;
         const k = b * n + a;
         if (!w.carsAllowed(k)) continue;
         // Sens uniques : on ne remonte pas une voie à contresens
-        const bit = d === 0 ? 1 : d === 1 ? 2 : d === 2 ? 4 : 8;
-        if ((w.oneway[k] && w.oneway[k] !== bit) || (w.oneway[cur] && w.oneway[cur] !== bit)) continue;
+        if ((w.oneway[k] && w.oneway[k] !== d + 1) || (w.oneway[cur] && w.oneway[cur] !== d + 1)) continue;
         // Coût = temps de parcours (les voies rapides attirent le trafic)
         const speed = ROAD_INFO[w.roadType[k] as RoadType]?.speed ?? 1;
-        const cost = gc + 1 / speed + (ignoreTraffic ? 0 : Math.min(this.density[k], 6) * 0.6);
+        const cost = gc + (d % 2 ? 1.414 : 1) / speed + (ignoreTraffic ? 0 : Math.min(this.density[k], 6) * 0.6);
         if (seen[k] === stamp && cost >= g[k]) continue;
         seen[k] = stamp;
         g[k] = cost;
         came[k] = cur;
-        open.push(k, cost + Math.abs(a - ti) + Math.abs(b - tj));
+        const ddx = Math.abs(a - ti), ddz = Math.abs(b - tj);
+        open.push(k, cost + (Math.max(ddx, ddz) + 0.414 * Math.min(ddx, ddz)) * 0.6);
       }
     }
     return null;
@@ -319,28 +320,34 @@ export class Traffic {
     return [bi - ai, (b - bi) / n - (a - ai) / n];
   }
 
+  /**
+   * Trajectoire sur une case : courbe passant par le milieu des liaisons avec les cases
+   * précédente et suivante (même géométrie que la chaussée dessinée), décalée sur la voie de droite.
+   */
   private setupSegment(v: Vehicle): void {
     const n = this.world.size;
     const p = v.path, k = v.seg;
     const cur = p[k];
-    const ci = cur % n, cj = (cur - ci) / n;
-    const cx = ci + 0.5, cz = cj + 0.5;
+    const cx = (cur % n) + 0.5, cz = Math.floor(cur / n) + 0.5;
     const prev = k > 0 ? p[k - 1] : v.loop ? p[p.length - 1] : -1;
     const next = k < p.length - 1 ? p[k + 1] : v.loop ? p[0] : -1;
-    const dIn = prev >= 0 ? this.dir(prev, cur) : this.dir(cur, next);
-    const dOut = next >= 0 ? this.dir(cur, next) : dIn;
-    // Voie de droite : droite de (dx, dz) = (-dz, dx)
-    const ex = prev >= 0 ? cx - dIn[0] * 0.5 - dIn[1] * LANE : cx - dIn[1] * LANE;
-    const ez = prev >= 0 ? cz - dIn[1] * 0.5 + dIn[0] * LANE : cz + dIn[0] * LANE;
-    const ox = next >= 0 ? cx + dOut[0] * 0.5 - dOut[1] * LANE : cx - dOut[1] * LANE;
-    const oz = next >= 0 ? cz + dOut[1] * 0.5 + dOut[0] * LANE : cz + dOut[0] * LANE;
-    let mx: number, mz: number;
-    if ((dIn[0] === dOut[0] && dIn[1] === dOut[1]) || (dIn[0] === -dOut[0] && dIn[1] === -dOut[1])) {
-      mx = (ex + ox) / 2; mz = (ez + oz) / 2;
-    } else {
-      // Point de contrôle à l'intersection des deux voies (virage arrondi)
-      const s = (ox - ex) * dIn[0] + (oz - ez) * dIn[1];
-      mx = ex + dIn[0] * s; mz = ez + dIn[1] * s;
+    const center = (t: number): [number, number] => [(t % n) + 0.5, Math.floor(t / n) + 0.5];
+    const right = (dx: number, dz: number): [number, number] => { const l = Math.hypot(dx, dz) || 1; return [-dz / l, dx / l]; };
+    let ex: number, ez: number, ox: number, oz: number, nIn: [number, number], nOut: [number, number];
+    if (prev >= 0) { const [px, pz] = center(prev); nIn = right(cx - px, cz - pz); ex = (px + cx) / 2; ez = (pz + cz) / 2; }
+    else { const [qx, qz] = center(next); nIn = right(qx - cx, qz - cz); ex = cx; ez = cz; }
+    if (next >= 0) { const [qx, qz] = center(next); nOut = right(qx - cx, qz - cz); ox = (qx + cx) / 2; oz = (qz + cz) / 2; }
+    else { nOut = nIn; ox = cx; oz = cz; }
+    ex += nIn[0] * LANE; ez += nIn[1] * LANE;
+    ox += nOut[0] * LANE; oz += nOut[1] * LANE;
+    // Point de contrôle : centre de la case décalé selon la bissectrice des deux normales
+    let mx = nIn[0] + nOut[0], mz = nIn[1] + nOut[1];
+    const ml = Math.hypot(mx, mz);
+    if (ml < 0.2) { mx = (ex + ox) / 2; mz = (ez + oz) / 2; } // demi-tour
+    else {
+      const cosHalf = Math.max(0.5, ml / 2);
+      mx = cx + (mx / ml) * (LANE / cosHalf);
+      mz = cz + (mz / ml) * (LANE / cosHalf);
     }
     v.c = [ex, ez, mx, mz, ox, oz];
     const chord = Math.hypot(ox - ex, oz - ez);
@@ -361,14 +368,7 @@ export class Traffic {
   // ---------- Carrefours ----------
 
   private isJunction(tile: number): boolean {
-    const w = this.world, n = w.size;
-    const i = tile % n, j = (tile - i) / n;
-    let deg = 0;
-    if (w.isRoad(i + 1, j)) deg++;
-    if (w.isRoad(i - 1, j)) deg++;
-    if (w.isRoad(i, j + 1)) deg++;
-    if (w.isRoad(i, j - 1)) deg++;
-    return deg >= 3;
+    return this.world.linkCount(tile) >= 3;
   }
 
   /** Un véhicule peut entrer dans le carrefour s'il est libre ou occupé par des véhicules venant du même côté. */
@@ -377,6 +377,21 @@ export class Traffic {
     if (!occ || occ.size === 0) return true;
     for (const d of occ.values()) if (d !== entryDir) return false;
     return occ.size < 3;
+  }
+
+  /** La case de sortie du prochain carrefour n'est-elle pas encombrée de véhicules à l'arrêt ? */
+  private exitClear(v: Vehicle): boolean {
+    const p = v.path, len = p.length;
+    const idx = (o: number) => (v.loop ? p[(v.seg + o) % len] : v.seg + o < len ? p[v.seg + o] : -1);
+    const junction = idx(1), exit = idx(2);
+    if (junction < 0 || exit < 0) return true;
+    const n = this.world.size;
+    const ex = (exit % n) - (junction % n), ez = Math.floor(exit / n) - Math.floor(junction / n);
+    let stopped = 0;
+    for (const o of this.buckets.get(exit) ?? []) {
+      if (o.speed < 0.2 && o.hx * ex + o.hz * ez > 0.3) stopped++;
+    }
+    return stopped < 2;
   }
 
   private release(v: Vehicle): void {
@@ -473,7 +488,10 @@ export class Traffic {
         const d = this.dir(v.path[v.seg], next);
         const entry = d[0] + d[1] * 3;
         const lit = this.world.lights[next] === 1 || this.world.lights[next] === 2;
-        const blocked = lit ? !this.green(next, d[0] !== 0) : !this.canEnter(next, entry) && v.wait < 2.5;
+        // « Ne pas bloquer le carrefour » : on n'entre que si la sortie a de la place
+        const boxFull = !this.exitClear(v) || (this.occupants.get(next)?.size ?? 0) >= 4;
+        const blocked = (lit ? !this.green(next, d[0] !== 0) : !this.canEnter(next, entry) && v.wait < 2.5) || (boxFull && v.wait < 6);
+        if (boxFull && !blocked) v.wait = 0;
         if (blocked) {
           stopAt = Math.max(0, remaining - 0.02);
           targetSpeed = Math.min(targetSpeed, v.maxSpeed * Math.max(0, stopAt / 0.3));

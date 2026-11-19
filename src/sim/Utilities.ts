@@ -71,7 +71,7 @@ export class Utilities {
   }
 
   private labelComponents(): void {
-    const w = this.world, n = w.size;
+    const w = this.world;
     const comp = this.component;
     comp.fill(-1);
     let label = 0;
@@ -82,11 +82,9 @@ export class Utilities {
       stack.push(k);
       while (stack.length) {
         const cur = stack.pop()!;
-        const i = cur % n, j = (cur - i) / n;
-        if (i + 1 < n && w.tiles[cur + 1] === 1 && comp[cur + 1] === -1) { comp[cur + 1] = label; stack.push(cur + 1); }
-        if (i > 0 && w.tiles[cur - 1] === 1 && comp[cur - 1] === -1) { comp[cur - 1] = label; stack.push(cur - 1); }
-        if (j + 1 < n && w.tiles[cur + n] === 1 && comp[cur + n] === -1) { comp[cur + n] = label; stack.push(cur + n); }
-        if (j > 0 && w.tiles[cur - n] === 1 && comp[cur - n] === -1) { comp[cur - n] = label; stack.push(cur - n); }
+        for (const q of w.neighbors(cur)) {
+          if (w.tiles[q] === 1 && comp[q] === -1) { comp[q] = label; stack.push(q); }
+        }
       }
       label++;
     }
