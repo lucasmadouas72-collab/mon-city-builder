@@ -7,8 +7,14 @@ import { Zone, ZONE_INFO, type ZoneType } from '../sim/zones';
 import { SERVICE_INFO, Service as Svc, type Service } from '../sim/services';
 import { BUS_STOP_COST } from '../sim/economy';
 import type { UndoStack } from '../sim/Undo';
+import { ROAD_INFO, RoadType } from '../sim/roads';
 
-export type ToolId = 'select' | 'road' | 'zoneR' | 'zoneC' | 'zoneI' | 'zoneO' | 'dezone' | 'bulldoze' | 'busstop' | 'busline' | 'metroline' | 'tUp' | 'tDown' | 'tSmooth' | 'tFlat' | 'tTrees' | `svc${number}`;
+/** Famille de voie posée par chaque outil de route. */
+export const ROAD_TOOL: Partial<Record<string, RoadType>> = {
+  road: RoadType.Street, avenue: RoadType.Avenue, highway: RoadType.Highway, pedestrian: RoadType.Pedestrian,
+};
+
+export type ToolId = 'select' | 'road' | 'avenue' | 'highway' | 'pedestrian' | 'oneway' | 'lights' | 'zoneR' | 'zoneC' | 'zoneI' | 'zoneO' | 'dezone' | 'bulldoze' | 'busstop' | 'busline' | 'metroline' | 'tUp' | 'tDown' | 'tSmooth' | 'tFlat' | 'tTrees' | `svc${number}`;
 
 const TERRAIN_MODE = { tUp: 'up', tDown: 'down', tSmooth: 'smooth', tFlat: 'flat', tTrees: 'trees' } as const;
 
@@ -216,7 +222,9 @@ export class ToolManager {
     } else if (tiles) {
       const zone = TOOL_ZONE[this.tool];
       this.act(() => {
-        if (this.tool === 'road') this.sim.buildRoads(tiles);
+        if (ROAD_TOOL[this.tool]) this.sim.buildRoads(tiles, ROAD_TOOL[this.tool]);
+        else if (this.tool === 'oneway') this.sim.setOneway(tiles);
+        else if (this.tool === 'lights') this.sim.toggleLights(tiles[tiles.length - 1]);
         else if (this.tool === 'bulldoze') this.sim.bulldoze(tiles);
         else if (zone !== undefined) this.sim.applyZone(tiles, zone);
         else if (toolService(this.tool)) this.sim.placeService(tiles[0], toolService(this.tool)!);
@@ -232,7 +240,7 @@ export class ToolManager {
     if (!start || !end) return null;
     const w = this.sim.world;
     const out: number[] = [];
-    if (this.tool === 'road') {
+    if (ROAD_TOOL[this.tool] || this.tool === 'oneway') {
       // Tracé en L : d'abord l'axe dominant
       const dx = end.i - start.i, dz = end.j - start.j;
       const sx = Math.sign(dx), sz = Math.sign(dz);
@@ -265,15 +273,30 @@ export class ToolManager {
     if (!this.lineKind) this.onDraft?.(null, []);
     if (!tiles) {
       ov.clear();
-    } else if (this.tool === 'road') {
-      const est = this.sim.estimateRoads(tiles);
+    } else if (this.tool === 'oneway') {
+      const roads = tiles.filter((t) => this.sim.world.tiles[t] === 1);
+      ov.set([[roads, OverlayColor.valid], [tiles.filter((t) => this.sim.world.tiles[t] !== 1), OverlayColor.invalid]]);
+      this.tip = { text: tiles.length < 2 ? 'Glissez le long d\'une route dans le sens voulu (refaire = double sens)' : `Sens unique sur ${roads.length} case(s)`, kind: 'info' };
+    } else if (this.tool === 'lights') {
+      const w = this.sim.world, t = tiles[tiles.length - 1];
+      const ok = w.tiles[t] === 1 && w.roadMask(t % w.size, Math.floor(t / w.size)).toString(2).split('1').length - 1 >= 3;
+      ov.set([[[t], ok ? OverlayColor.valid : OverlayColor.invalid]]);
+      const on = w.lights[t] === 1 || w.lights[t] === 2;
+      this.tip = ok ? { text: on ? 'Cliquez pour retirer les feux' : 'Cliquez pour installer des feux', kind: 'ok' } : { text: 'Choisissez un carrefour', kind: 'bad' };
+    } else if (ROAD_TOOL[this.tool]) {
+      const type = ROAD_TOOL[this.tool]!;
+      const est = this.sim.estimateRoads(tiles, type);
       const tooExpensive = est.cost > this.sim.money;
       const blocked = est.invalid.length > 0;
       ov.set([[est.valid, tooExpensive || blocked ? OverlayColor.invalid : OverlayColor.valid], [est.invalid, OverlayColor.invalid]]);
       if (blocked && est.reason) {
         this.tip = { text: est.reason, kind: 'bad' };
       } else if (est.valid.length) {
-        this.tip = { text: `${est.valid.length} case(s) · ${fmt(est.cost)}`, kind: tooExpensive ? 'bad' : 'ok' };
+        const w = this.sim.world;
+        const bridges = est.valid.filter((t) => w.isWater(t % w.size, Math.floor(t / w.size))).length;
+        const upgrades = est.valid.filter((t) => w.tiles[t] === 1).length;
+        const extra = [bridges ? `${bridges} de pont` : '', upgrades ? `${upgrades} remplacée(s)` : ''].filter(Boolean).join(', ');
+        this.tip = { text: `${ROAD_INFO[type].name} · ${est.valid.length} case(s)${extra ? ` (${extra})` : ''} · ${fmt(est.cost)}`, kind: tooExpensive ? 'bad' : 'ok' };
       }
     } else if (this.tool === 'bulldoze') {
       const est = this.sim.estimateBulldoze(tiles);

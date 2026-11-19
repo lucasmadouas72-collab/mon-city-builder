@@ -8,6 +8,7 @@ import { DataView } from './render/DataView';
 import { ServiceLayer } from './render/ServiceLayer';
 import { TransitView } from './render/TransitView';
 import { Atmosphere } from './render/Atmosphere';
+import { TrafficLights } from './render/TrafficLights';
 import { Simulation } from './sim/Simulation';
 import { World } from './sim/World';
 import { UndoStack } from './sim/Undo';
@@ -49,7 +50,8 @@ function startGame(config: GameConfig, file?: SaveFile): void {
   const services = new ServiceLayer(world, sim.utilities);
   const transitView = new TransitView(world, sim.transit);
   const atmosphere = new Atmosphere(view, world);
-  view.scene.add(trafficView.group, dataView.overlay.group, services.group, transitView.group, atmosphere.group);
+  const lights = new TrafficLights(world, sim.traffic);
+  view.scene.add(trafficView.group, dataView.overlay.group, services.group, transitView.group, atmosphere.group, lights.group);
   tools.onDraft = (kind, tiles) => transitView.setDraft(kind, tiles);
 
   const hud = new Hud(document.getElementById('hud')!, sim, tools, dataView);
@@ -106,6 +108,7 @@ function startGame(config: GameConfig, file?: SaveFile): void {
     view.buildings.markChanged([]);
     services.rebuild();
     atmosphere.rebuildLamps();
+    lights.rebuild();
   });
   sim.events.on('servicesChanged', () => { services.rebuild(); transitView.rebuild(); });
   sim.events.on('firesChanged', () => services.refreshFires());
@@ -131,6 +134,7 @@ function startGame(config: GameConfig, file?: SaveFile): void {
       transitView.rebuild();
     }
     trafficView.update();
+    lights.update();
     dataView.update(now / 1000);
     services.update(now / 1000);
     transitView.visible = dataView.mode === 'transport' || tools.tool === 'busline' || tools.tool === 'metroline' || tools.tool === 'busstop';

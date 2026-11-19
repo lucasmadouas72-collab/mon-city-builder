@@ -2,6 +2,7 @@ import { MAP_SIZE, MAX_ROAD_SLOPE, SEA_LEVEL } from '../config';
 import { fbm, rng } from '../core/noise';
 import { MAX_BUILD_SLOPE, ZONE_DEPTH } from './zones';
 import { SERVICE_INFO, type Service } from './services';
+import { BRIDGE_Y, RoadType } from './roads';
 
 export type MapType = 'river' | 'plain' | 'mountain' | 'valley' | 'coast' | 'island' | 'archipelago' | 'forest' | 'desert' | 'hills';
 
@@ -52,6 +53,12 @@ export class World {
   readonly service: Uint8Array;
   /** Arrêt de bus sur une case de route. */
   readonly busStop: Uint8Array;
+  /** Famille de voie (RoadType) des cases de route. */
+  readonly roadType: Uint8Array;
+  /** Sens unique : 0 = double sens, sinon direction imposée (bit N/E/S/W). */
+  readonly oneway: Uint8Array;
+  /** Feux tricolores sur un carrefour. */
+  readonly lights: Uint8Array;
 
   readonly mapType: MapType;
 
@@ -70,6 +77,9 @@ export class World {
     this.roadDist = new Uint8Array(n * n).fill(255);
     this.service = new Uint8Array(n * n);
     this.busStop = new Uint8Array(n * n);
+    this.roadType = new Uint8Array(n * n);
+    this.oneway = new Uint8Array(n * n);
+    this.lights = new Uint8Array(n * n);
     if (generate) this.generate();
   }
 
@@ -79,7 +89,12 @@ export class World {
     const dist = this.roadDist;
     dist.fill(255);
     let queue: number[] = [];
-    for (let k = 0; k < n * n; k++) if (this.tiles[k] === Tile.Road) { dist[k] = 0; queue.push(k); }
+    // Les autoroutes ne desservent pas les parcelles
+    for (let k = 0; k < n * n; k++) {
+      if (this.tiles[k] !== Tile.Road) continue;
+      dist[k] = 0;
+      if (this.roadType[k] !== RoadType.Highway) queue.push(k);
+    }
     for (let d = 1; d <= ZONE_DEPTH + 1 && queue.length; d++) {
       const next: number[] = [];
       for (const k of queue) {
@@ -263,11 +278,28 @@ export class World {
   /** Raison pour laquelle on ne peut pas poser de route, ou null si c'est possible. */
   roadBlocker(i: number, j: number): string | null {
     if (!this.inBounds(i, j)) return 'Hors de la carte';
-    if (this.isWater(i, j)) return "Impossible de construire sur l'eau";
     if (this.service[this.index(i, j)]) return 'Case occupée par un équipement';
+    if (this.isWater(i, j)) {
+      const [lo] = this.tileMinMax(i, j);
+      return lo < -2.2 ? 'Eau trop profonde pour un pont' : null;
+    }
     const [lo, hi] = this.tileMinMax(i, j);
-    if (hi - lo > MAX_ROAD_SLOPE) return 'Terrain trop pentu';
+    if (hi - lo > MAX_ROAD_SLOPE) return 'Terrain trop pentu : lissez-le avec le menu Terrain';
     return null;
+  }
+
+  /** Hauteur de la chaussée : suit le relief, mais reste au-dessus de l'eau (ponts). */
+  roadY(x: number, z: number): number {
+    return Math.max(this.heightAt(x, z), BRIDGE_Y);
+  }
+
+  isBridge(i: number, j: number): boolean {
+    return this.isRoad(i, j) && this.isWater(i, j);
+  }
+
+  /** Une voiture peut-elle circuler sur cette case ? */
+  carsAllowed(k: number): boolean {
+    return this.tiles[k] === Tile.Road && this.roadType[k] !== RoadType.Pedestrian;
   }
 
   /** Raison pour laquelle on ne peut pas placer cet équipement, ou null. */

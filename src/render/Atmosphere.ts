@@ -80,7 +80,7 @@ export class Atmosphere {
       const i = k % w.size, j = Math.floor(k / w.size);
       if ((i + j) % 2) continue;
       const x = i + 0.1, z = j + 0.1;
-      pts.push(x, w.heightAt(x, z) + 0.32, z);
+      pts.push(x, w.roadY(x, z) + 0.32, z);
     }
     this.lamps.geometry.dispose();
     const g = new THREE.BufferGeometry();

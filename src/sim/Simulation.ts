@@ -15,6 +15,7 @@ import {
   MILESTONES, MIN_TAX, TICKET_PRICE, defaultBudgets, defaultTaxes, loanPayment, milestoneIndex, type Loan,
 } from './economy';
 import type { BudgetKey } from './services';
+import { BRIDGE_COST_MUL, ROAD_INFO, RoadType } from './roads';
 import { ABANDON_DAYS, Coverage, SERVICE_INFO, Service, Utility } from './services';
 import { BuildState, Zone, ZONE_DEPTH, ZONE_INFO, type ZoneType } from './zones';
 
@@ -160,7 +161,11 @@ export class Simulation {
     const w = this.world;
     w.computeRoadDist();
     this.roadCount = 0;
-    for (let k = 0; k < w.tiles.length; k++) if (w.tiles[k] === Tile.Road) this.roadCount++;
+    for (let k = 0; k < w.tiles.length; k++) {
+      if (w.tiles[k] !== Tile.Road) continue;
+      this.roadCount++;
+      if (!w.roadType[k]) w.roadType[k] = RoadType.Street;
+    }
     this.zonedDirty = true;
     this.popAtMonthStart = this.stats.population;
   }
@@ -371,6 +376,8 @@ export class Simulation {
         if (!near) continue;
         if (!water && w.isWater(a, b)) water = true;
         if (w.trees[k]) v += 0.012;
+        if (w.tiles[k] === Tile.Road && w.roadType[k] === RoadType.Pedestrian) v += 0.015;
+        if (w.tiles[k] === Tile.Road && w.roadType[k] === RoadType.Highway) v -= 0.02;
         if (w.bState[k] === BuildState.Built) {
           const z = w.zones[k];
           if (z === Zone.Industrial) v -= 0.06;
@@ -454,7 +461,13 @@ export class Simulation {
     incomeBy.tickets = this.lastPassengers * TICKET_PRICE;
 
     // Dépenses
-    const expensesBy: Record<string, number> = { roads: this.roadCount * ROAD_UPKEEP_MONTH };
+    let roadUpkeep = 0;
+    for (let k = 0; k < w.tiles.length; k++) {
+      if (w.tiles[k] !== Tile.Road) continue;
+      const u = ROAD_INFO[w.roadType[k] as RoadType]?.upkeep ?? ROAD_UPKEEP_MONTH;
+      roadUpkeep += w.heights[0] !== undefined && w.isWater(k % w.size, Math.floor(k / w.size)) ? u * 3 : u;
+    }
+    const expensesBy: Record<string, number> = { roads: roadUpkeep };
     for (const k of BUDGET_KEYS) expensesBy[k] = 0;
     for (let k = 0; k < w.service.length; k++) {
       if (!w.service[k]) continue;
@@ -531,40 +544,60 @@ export class Simulation {
 
   // ---------- Construction de routes ----------
 
-  estimateRoads(path: number[]): CostEstimate {
+  /** Types de voie débloqués. */
+  isRoadUnlocked(t: RoadType): boolean {
+    return this.sandbox || this.maxPop >= ROAD_INFO[t].unlockPop;
+  }
+
+  estimateRoads(path: number[], type: RoadType = RoadType.Street): CostEstimate {
     const w = this.world;
     const out: CostEstimate = { cost: 0, valid: [], invalid: [], reason: null };
+    const info = ROAD_INFO[type];
+    if (!this.isRoadUnlocked(type)) {
+      out.invalid = path;
+      out.reason = `${info.name} : débloquée à ${info.unlockPop.toLocaleString('fr-FR')} habitants`;
+      return out;
+    }
     for (const idx of path) {
       const i = idx % w.size, j = Math.floor(idx / w.size);
-      if (w.tiles[idx] === Tile.Road) continue;
+      const water = w.isWater(i, j);
+      if (w.tiles[idx] === Tile.Road) {
+        // Route existante d'un autre type : remplacement (sans tout détruire)
+        if (w.roadType[idx] !== type) { out.valid.push(idx); out.cost += info.cost * (water ? BRIDGE_COST_MUL : 1); }
+        continue;
+      }
       const block = w.roadBlocker(i, j);
       if (block) {
         out.invalid.push(idx);
         out.reason ??= block;
       } else {
         out.valid.push(idx);
-        out.cost += ROAD_COST + w.trees[idx] * TREE_CLEAR_COST;
+        out.cost += info.cost * (water ? BRIDGE_COST_MUL : 1) + w.trees[idx] * TREE_CLEAR_COST;
       }
     }
     return out;
   }
 
-  buildRoads(path: number[]): boolean {
-    const est = this.estimateRoads(path);
+  buildRoads(path: number[], type: RoadType = RoadType.Street): boolean {
+    const est = this.estimateRoads(path, type);
     if (est.invalid.length) {
       this.events.emit('notify', { text: est.reason ?? 'Construction impossible', kind: 'warn' });
       return false;
     }
     if (est.valid.length === 0) return false;
     if (est.cost > this.money) {
-      this.events.emit('notify', { text: 'Fonds insuffisants', kind: 'error' });
+      this.events.emit('notify', { text: `Fonds insuffisants : il faut ${est.cost.toLocaleString('fr-FR')} €`, kind: 'error' });
       return false;
     }
     const w = this.world;
     let treesRemoved = false;
     const removedBuildings: number[] = [];
+    let added = 0;
     for (const idx of est.valid) {
+      if (w.tiles[idx] !== Tile.Road) added++;
       w.tiles[idx] = Tile.Road;
+      w.roadType[idx] = type;
+      if (type === RoadType.Pedestrian || type === RoadType.Highway) w.busStop[idx] = type === RoadType.Highway ? 0 : w.busStop[idx];
       if (w.trees[idx]) { w.trees[idx] = 0; treesRemoved = true; }
       if (w.zones[idx]) {
         w.zones[idx] = Zone.None;
@@ -573,12 +606,68 @@ export class Simulation {
         this.zonedDirty = true;
       }
     }
-    this.roadCount += est.valid.length;
+    this.roadCount += added;
     this.spend(est.cost);
+    this.updateAutoLights(est.valid);
     this.onRoadsChanged(est.valid);
     if (treesRemoved) this.events.emit('treesChanged', undefined);
     if (removedBuildings.length) this.events.emit('buildingsChanged', { tiles: removedBuildings });
     this.events.emit('zonesChanged', undefined);
+    return true;
+  }
+
+  /** Feux automatiques sur les carrefours d'avenues (sauf choix manuel du joueur). */
+  private updateAutoLights(tiles: number[]): void {
+    const w = this.world, n = w.size;
+    const check = new Set<number>();
+    for (const t of tiles) { check.add(t); check.add(t + 1); check.add(t - 1); check.add(t + n); check.add(t - n); }
+    for (const k of check) {
+      if (k < 0 || k >= w.tiles.length) continue;
+      if (w.lights[k] >= 2) continue; // réglage manuel
+      if (w.tiles[k] !== Tile.Road) { w.lights[k] = 0; continue; }
+      const i = k % n, j = (k - i) / n;
+      const nb = [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]].filter(([a, b]) => w.isRoad(a, b));
+      const avenue = w.roadType[k] === RoadType.Avenue || nb.some(([a, b]) => w.roadType[w.index(a, b)] === RoadType.Avenue);
+      w.lights[k] = nb.length >= 3 && avenue && w.roadType[k] !== RoadType.Highway ? 1 : 0;
+    }
+  }
+
+  /** Active ou retire les feux d'un carrefour. */
+  toggleLights(idx: number): boolean {
+    const w = this.world, n = w.size;
+    const i = idx % n, j = Math.floor(idx / n);
+    const deg = [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]].filter(([a, b]) => w.isRoad(a, b)).length;
+    if (w.tiles[idx] !== Tile.Road || deg < 3) {
+      this.events.emit('notify', { text: 'Les feux se placent sur un carrefour (au moins 3 routes qui se rejoignent)', kind: 'warn' });
+      return false;
+    }
+    const on = w.lights[idx] === 1 || w.lights[idx] === 2;
+    w.lights[idx] = on ? 3 : 2;
+    this.events.emit('roadsChanged', { tiles: [idx] });
+    return true;
+  }
+
+  /** Met des routes en sens unique dans la direction du tracé (ou rétablit le double sens). */
+  setOneway(path: number[]): boolean {
+    const w = this.world, n = w.size;
+    if (path.length < 2) {
+      this.events.emit('notify', { text: 'Glissez le long de la route dans le sens de circulation voulu', kind: 'info' });
+      return false;
+    }
+    const dirs: number[] = [];
+    for (let k = 0; k < path.length; k++) {
+      const a = path[Math.max(0, k - 1)], b = path[Math.min(path.length - 1, Math.max(1, k))];
+      const d = b - a;
+      dirs.push(d === 1 ? 2 : d === -1 ? 8 : d === n ? 4 : 1);
+    }
+    const roads = path.filter((t) => w.tiles[t] === Tile.Road);
+    if (!roads.length) return false;
+    const already = path.every((t, k) => w.tiles[t] !== Tile.Road || w.oneway[t] === dirs[k]);
+    path.forEach((t, k) => { if (w.tiles[t] === Tile.Road) w.oneway[t] = already ? 0 : dirs[k]; });
+    this.traffic.validate();
+    this.transit.refreshAll();
+    this.events.emit('roadsChanged', { tiles: roads });
+    this.events.emit('notify', { text: already ? 'Double sens rétabli' : `Sens unique sur ${roads.length} case(s)`, kind: 'info' });
     return true;
   }
 
@@ -676,6 +765,7 @@ export class Simulation {
     const w = this.world;
     if (!this.busUnlocked) { this.events.emit('notify', { text: `Bus débloqués à ${BUS_UNLOCK.toLocaleString('fr-FR')} habitants`, kind: 'warn' }); return false; }
     if (w.tiles[idx] !== Tile.Road) { this.events.emit('notify', { text: 'Un arrêt se place sur une route', kind: 'warn' }); return false; }
+    if (w.roadType[idx] === RoadType.Highway || w.roadType[idx] === RoadType.Pedestrian) { this.events.emit('notify', { text: 'Pas d\'arrêt de bus sur une autoroute ou une voie piétonne', kind: 'warn' }); return false; }
     if (w.busStop[idx]) return false;
     if (this.money < BUS_STOP_COST) { this.events.emit('notify', { text: 'Fonds insuffisants', kind: 'error' }); return false; }
     w.busStop[idx] = 1;
@@ -793,7 +883,7 @@ export class Simulation {
     const tiles: number[] = [];
     for (const idx of area) {
       if (w.tiles[idx] === Tile.Road) {
-        refund += Math.round(ROAD_COST * ROAD_REFUND);
+        refund += Math.round((ROAD_INFO[w.roadType[idx] as RoadType]?.cost ?? ROAD_COST) * ROAD_REFUND);
         tiles.push(idx);
       } else if (w.service[idx]) {
         refund += Math.round(SERVICE_INFO[w.service[idx] as Exclude<Service, Service.None>].cost * 0.25);
@@ -824,6 +914,9 @@ export class Simulation {
       if (w.tiles[idx] === Tile.Road) {
         w.tiles[idx] = Tile.Empty;
         w.busStop[idx] = 0;
+        w.roadType[idx] = 0;
+        w.oneway[idx] = 0;
+        w.lights[idx] = 0;
         roads.push(idx);
       } else if (w.service[idx]) {
         w.service[idx] = Service.None;
@@ -838,6 +931,7 @@ export class Simulation {
     }
     this.roadCount -= roads.length;
     this.spend(est.cost - est.refund);
+    if (roads.length) this.updateAutoLights(roads);
     if (roads.length) this.onRoadsChanged(roads);
     if (buildings.length) {
       this.recomputeStats();

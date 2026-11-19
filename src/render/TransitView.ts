@@ -70,7 +70,7 @@ export class TransitView {
   private center(idx: number, lift = 0): THREE.Vector3 {
     const w = this.world;
     const i = idx % w.size, j = Math.floor(idx / w.size);
-    return new THREE.Vector3(i + 0.5, w.heightAt(i + 0.5, j + 0.5) + lift, j + 0.5);
+    return new THREE.Vector3(i + 0.5, w.roadY(i + 0.5, j + 0.5) + lift, j + 0.5);
   }
 
   /** Points d'une polyligne passant par des cases, avec subdivision pour suivre le relief. */
@@ -83,7 +83,7 @@ export class TransitView {
       const steps = Math.max(1, Math.ceil(a.distanceTo(b) / 0.5));
       for (let s = 0; s < steps; s++) {
         const p = a.clone().lerp(b, s / steps);
-        p.y = w.heightAt(p.x, p.z);
+        p.y = w.roadY(p.x, p.z);
         pts.push(p);
       }
     }

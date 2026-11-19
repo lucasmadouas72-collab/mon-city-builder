@@ -1,5 +1,6 @@
 import { rng } from '../core/noise';
 import type { World } from './World';
+import { LIGHT_PHASE, ROAD_INFO, type RoadType } from './roads';
 import { BuildState, Zone } from './zones';
 
 /**
@@ -218,8 +219,13 @@ export class Traffic {
         const b = cj + (d === 2 ? 1 : d === 0 ? -1 : 0);
         if (a < 0 || b < 0 || a >= n || b >= n) continue;
         const k = b * n + a;
-        if (w.tiles[k] !== 1) continue;
-        const cost = gc + 1 + (ignoreTraffic ? 0 : Math.min(this.density[k], 6) * 0.6);
+        if (!w.carsAllowed(k)) continue;
+        // Sens uniques : on ne remonte pas une voie à contresens
+        const bit = d === 0 ? 1 : d === 1 ? 2 : d === 2 ? 4 : 8;
+        if ((w.oneway[k] && w.oneway[k] !== bit) || (w.oneway[cur] && w.oneway[cur] !== bit)) continue;
+        // Coût = temps de parcours (les voies rapides attirent le trafic)
+        const speed = ROAD_INFO[w.roadType[k] as RoadType]?.speed ?? 1;
+        const cost = gc + 1 / speed + (ignoreTraffic ? 0 : Math.min(this.density[k], 6) * 0.6);
         if (seen[k] === stamp && cost >= g[k]) continue;
         seen[k] = stamp;
         g[k] = cost;
@@ -252,6 +258,8 @@ export class Traffic {
     if (from < 0 || to < 0) return false;
     const a = this.roadAccess(from), b = this.roadAccess(to);
     if (a < 0 || b < 0) return false;
+    // Depuis ou vers une voie piétonne : le trajet se fait à pied
+    if (!this.world.carsAllowed(a) || !this.world.carsAllowed(b)) { this.tripsCompleted++; return false; }
     if (kind === VehicleKind.Car && this.transitHook) {
       const byTransit = this.transitHook(a, b);
       this.transitShare += ((byTransit ? 1 : 0) - this.transitShare) * 0.01;
@@ -391,8 +399,20 @@ export class Traffic {
     });
   }
 
+  /** Horloge des feux (secondes simulées). */
+  clock = 0;
+
+  /** Le feu est-il vert pour un véhicule arrivant selon cet axe ? */
+  green(tile: number, horizontal: boolean): boolean {
+    const l = this.world.lights[tile];
+    if (l !== 1 && l !== 2) return true;
+    const phase = Math.floor((this.clock + (tile % 7) * 0.5) / LIGHT_PHASE) % 2;
+    return horizontal ? phase === 0 : phase === 1;
+  }
+
   update(dt: number, target: number): void {
     if (dt <= 0) return;
+    this.clock += dt;
     // Création progressive de nouveaux trajets
     let buses = 0;
     for (const v of this.vehicles) if (v.loop) buses++;
@@ -440,7 +460,7 @@ export class Traffic {
           if (ahead < gap) gap = ahead;
         }
       }
-      let targetSpeed = v.maxSpeed * this.speedFactor;
+      let targetSpeed = v.maxSpeed * this.speedFactor * (ROAD_INFO[this.world.roadType[v.path[v.seg]] as RoadType]?.speed ?? 1);
       const len = v.kind === VehicleKind.Bus ? 0.4 : v.kind === VehicleKind.Truck ? 0.34 : 0.24;
       if (v.dwell > 0) { v.dwell -= dt; targetSpeed = 0; }
       if (gap < Infinity) targetSpeed *= Math.max(0, Math.min(1, (gap - len) / SAFE_GAP));
@@ -452,7 +472,9 @@ export class Traffic {
       if (next >= 0 && remaining < 0.4 && v.holding !== next && this.isJunction(next)) {
         const d = this.dir(v.path[v.seg], next);
         const entry = d[0] + d[1] * 3;
-        if (!this.canEnter(next, entry) && v.wait < 2.5) {
+        const lit = this.world.lights[next] === 1 || this.world.lights[next] === 2;
+        const blocked = lit ? !this.green(next, d[0] !== 0) : !this.canEnter(next, entry) && v.wait < 2.5;
+        if (blocked) {
           stopAt = Math.max(0, remaining - 0.02);
           targetSpeed = Math.min(targetSpeed, v.maxSpeed * Math.max(0, stopAt / 0.3));
           if (stopAt < 0.05) v.wait += dt;

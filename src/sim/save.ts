@@ -5,7 +5,9 @@ import { World } from './World';
 /** Sauvegarde complète d'une partie, au format JSON (tableaux encodés en base64). */
 
 const VERSION = 1;
-const ARRAYS = ['heights', 'tiles', 'trees', 'zones', 'bState', 'bLevel', 'bVariant', 'bTimer', 'service', 'busStop'] as const;
+const ARRAYS = ['heights', 'tiles', 'trees', 'zones', 'bState', 'bLevel', 'bVariant', 'bTimer', 'service', 'busStop', 'roadType', 'oneway', 'lights'] as const;
+/** Tableaux ajoutés après la première version (absents des anciennes sauvegardes). */
+const OPTIONAL = new Set(['roadType', 'oneway', 'lights']);
 type ArrayKey = (typeof ARRAYS)[number];
 
 function toB64(arr: ArrayBufferView): string {
@@ -67,7 +69,7 @@ export function parseSave(data: string): SaveFile {
 /** Recrée le monde d'une sauvegarde (sans régénérer le terrain). */
 export function worldFromSave(file: SaveFile): World {
   const w = new World(file.world.seed, file.world.mapType as World['mapType'], false);
-  for (const k of ARRAYS) fromB64(file.world[k], w[k]);
+  for (const k of ARRAYS) { if (file.world[k]) fromB64(file.world[k], w[k]); else if (!OPTIONAL.has(k)) throw new Error('Sauvegarde incomplète'); }
   w.computeRoadDist();
   return w;
 }

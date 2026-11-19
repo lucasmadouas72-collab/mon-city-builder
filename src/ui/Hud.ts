@@ -1,5 +1,6 @@
 import { GAME_NAME } from '../config';
 import { BudgetPanel } from './BudgetPanel';
+import { ROAD_INFO, RoadType } from '../sim/roads';
 import { StatsPanel } from './StatsPanel';
 import { companyName, residentsOf } from '../sim/names';
 import { BUS_STOP_COST, BUS_UNLOCK, MILESTONES } from '../sim/economy';
@@ -64,7 +65,14 @@ const TRANSPORT_TOOLS: ToolDef[] = [
 
 const GROUPS: Group[] = [
   { id: 'select', label: 'Sélection', icon: 'select', key: '1', tools: [{ id: 'select', label: 'Sélection' }] },
-  { id: 'road', label: 'Route', icon: 'road', key: '2', tools: [{ id: 'road', label: 'Route' }] },
+  { id: 'roads', label: 'Routes', icon: 'road', tools: [
+    { id: 'road', label: 'Rue', key: '2', color: ROAD_INFO[RoadType.Street].color, sub: `${fmt(15)} / case · 30 km/h`, desc: ROAD_INFO[RoadType.Street].description },
+    { id: 'avenue', label: 'Avenue', color: ROAD_INFO[RoadType.Avenue].color, sub: `${fmt(32)} / case · 50 km/h`, desc: ROAD_INFO[RoadType.Avenue].description },
+    { id: 'highway', label: 'Autoroute', color: ROAD_INFO[RoadType.Highway].color, sub: `${fmt(70)} / case · 110 km/h`, unlock: 600, desc: ROAD_INFO[RoadType.Highway].description },
+    { id: 'pedestrian', label: 'Voie piétonne', color: ROAD_INFO[RoadType.Pedestrian].color, sub: `${fmt(20)} / case · sans voitures`, desc: ROAD_INFO[RoadType.Pedestrian].description },
+    { id: 'oneway', label: 'Sens unique', color: '#f59e0b', sub: 'Glisser dans le sens voulu', desc: 'Glissez le long d\'une route dans le sens de circulation. Refaites pour revenir au double sens.' },
+    { id: 'lights', label: 'Feux tricolores', color: '#ef4444', sub: 'Clic sur un carrefour', desc: 'Ajoute ou retire des feux. Les carrefours d\'avenues en ont automatiquement.' },
+  ] },
   { id: 'zones', label: 'Zones', icon: 'zone', tools: ZONE_TOOLS },
   { id: 'utilities', label: 'Réseaux', icon: 'utilities', tools: svcTools('utilities') },
   { id: 'services', label: 'Services', icon: 'services', tools: svcTools('services') },
@@ -370,7 +378,13 @@ export class Hud {
     let extra = '';
     if (w.isRoad(h.i, h.j)) {
       const d = this.sim.traffic.density[idx];
-      extra = `<dt>Circulation</dt><dd>${TrafficView.label(d)}</dd><dt>Véhicules</dt><dd>${d.toFixed(1)}</dd>`;
+      const info = ROAD_INFO[w.roadType[idx] as RoadType] ?? ROAD_INFO[RoadType.Street];
+      kind = w.isWater(h.i, h.j) ? `Pont · ${info.name}` : info.name;
+      const ow = w.oneway[idx];
+      extra = `${info.kmh ? `<dt>Vitesse</dt><dd>${info.kmh} km/h</dd>` : '<dt>Accès</dt><dd>Piétons uniquement</dd>'}
+        ${ow ? `<dt>Sens</dt><dd>Unique (${ow === 1 ? 'nord' : ow === 2 ? 'est' : ow === 4 ? 'sud' : 'ouest'})</dd>` : ''}
+        ${w.lights[idx] === 1 || w.lights[idx] === 2 ? '<dt>Carrefour</dt><dd>Feux tricolores</dd>' : ''}
+        <dt>Circulation</dt><dd>${TrafficView.label(d)}</dd><dt>Véhicules</dt><dd>${d.toFixed(1)}</dd>`;
     }
     if (svc) {
       const info = SERVICE_INFO[svc as Exclude<Service, 0>];

@@ -87,10 +87,10 @@ export class Vehicles {
       const mesh = this.meshes[k];
       const id = counts[k]++;
       if (id >= MAX) continue;
-      const y = w.heightAt(v.x, v.z) + 0.04;
+      const y = w.roadY(v.x, v.z) + 0.04;
       // Inclinaison selon la pente
-      const ahead = w.heightAt(v.x + v.hx * 0.1, v.z + v.hz * 0.1);
-      const behind = w.heightAt(v.x - v.hx * 0.1, v.z - v.hz * 0.1);
+      const ahead = w.roadY(v.x + v.hx * 0.1, v.z + v.hz * 0.1);
+      const behind = w.roadY(v.x - v.hx * 0.1, v.z - v.hz * 0.1);
       const pitch = -Math.atan2(ahead - behind, 0.2);
       this.e.set(pitch, Math.atan2(v.hx, v.hz), 0, 'YXZ');
       this.q.setFromEuler(this.e);
