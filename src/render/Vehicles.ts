@@ -92,6 +92,19 @@ function policeGeometry(): THREE.BufferGeometry {
   ])!;
 }
 
+function garbageGeometry(): THREE.BufferGeometry {
+  const B = THREE.BoxGeometry;
+  return mergeGeometries([
+    part(new B(0.12, 0.11, 0.2), '#ffffff', 0, 0.08, -0.05), // benne (teintée)
+    part(new B(0.11, 0.02, 0.05), '#3a3a3a', 0, 0.12, -0.15), // compacteur
+    part(new B(0.12, 0.075, 0.08), '#e5e7eb', 0, 0.062, 0.1), // cabine
+    part(new B(0.122, 0.03, 0.05), '#1d2733', 0, 0.08, 0.115),
+    part(new B(0.06, 0.016, 0.02), '#f59e0b', 0, 0.108, 0.1), // feu orange
+    part(new B(0.125, 0.024, 0.04), '#141414', 0, 0.02, 0.1),
+    part(new B(0.125, 0.024, 0.05), '#141414', 0, 0.02, -0.1),
+  ])!;
+}
+
 /** Rendu instancié des véhicules, synchronisé à chaque image sur la simulation. */
 export class Vehicles {
   readonly group = new THREE.Group();
@@ -105,7 +118,7 @@ export class Vehicles {
 
   constructor(private world: World, private traffic: Traffic) {
     const mat = patchEnv(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.25 }), { headlights: true, snow: true });
-    this.meshes = [carGeometry(), truckGeometry(), busGeometry(), ambulanceGeometry(), fireTruckGeometry(), policeGeometry()].map((g) => {
+    this.meshes = [carGeometry(), truckGeometry(), busGeometry(), ambulanceGeometry(), fireTruckGeometry(), policeGeometry(), garbageGeometry()].map((g) => {
       const mesh = new THREE.InstancedMesh(g, mat, MAX);
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.castShadow = true;
@@ -119,7 +132,7 @@ export class Vehicles {
 
   update(): void {
     const w = this.world;
-    const counts = [0, 0, 0, 0, 0, 0];
+    const counts = [0, 0, 0, 0, 0, 0, 0];
     const flash = Math.floor(performance.now() / 180) % 2 === 0;
     for (const v of this.traffic.vehicles) {
       const k = v.kind as number;
@@ -137,7 +150,7 @@ export class Vehicles {
       mesh.setMatrixAt(id, this.m.compose(this.p, this.q, this.s));
       mesh.setColorAt(id, this.c.setHex(v.color));
       // Gyrophares : la teinte alterne pendant une intervention (pas au retour)
-      if (k >= 3 && v.mission > 0 && flash) this.c.offsetHSL(0, 0, k === 5 ? 0.25 : 0.12), mesh.setColorAt(id, this.c);
+      if (k >= 3 && k <= 5 && v.mission > 0 && flash) this.c.offsetHSL(0, 0, k === 5 ? 0.25 : 0.12), mesh.setColorAt(id, this.c);
     }
     this.meshes.forEach((mesh, k) => {
       mesh.count = Math.min(counts[k], MAX);

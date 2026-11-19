@@ -6,9 +6,9 @@ import { hasJobs } from './zones';
 /** Sauvegarde complète d'une partie, au format JSON (tableaux encodés en base64). */
 
 const VERSION = 1;
-const ARRAYS = ['heights', 'tiles', 'trees', 'zones', 'bState', 'bLevel', 'bVariant', 'bTimer', 'service', 'busStop', 'roadType', 'oneway', 'lights', 'links', 'bDamage', 'rubble', 'roadDamage', 'soilPol', 'lotRoot', 'lotSize', 'bFace', 'bStyle', 'bId', 'bManual'] as const;
+const ARRAYS = ['heights', 'tiles', 'trees', 'zones', 'bState', 'bLevel', 'bVariant', 'bTimer', 'service', 'busStop', 'roadType', 'oneway', 'lights', 'links', 'bDamage', 'rubble', 'roadDamage', 'soilPol', 'lotRoot', 'lotSize', 'bFace', 'bStyle', 'bId', 'bManual', 'powerLine', 'resources'] as const;
 /** Tableaux ajoutés après la première version (absents des anciennes sauvegardes). */
-const OPTIONAL = new Set(['roadType', 'oneway', 'lights', 'links', 'bDamage', 'rubble', 'roadDamage', 'soilPol', 'lotRoot', 'lotSize', 'bFace', 'bStyle', 'bId', 'bManual']);
+const OPTIONAL = new Set(['roadType', 'oneway', 'lights', 'links', 'bDamage', 'rubble', 'roadDamage', 'soilPol', 'lotRoot', 'lotSize', 'bFace', 'bStyle', 'bId', 'bManual', 'powerLine', 'resources']);
 type ArrayKey = (typeof ARRAYS)[number];
 
 function toB64(arr: ArrayBufferView): string {
@@ -57,6 +57,10 @@ export function serialize(sim: Simulation, config: GameConfig, camera?: CameraSt
       lines: sim.transit.lines.map((l) => ({ kind: l.kind, stops: l.stops, color: l.color, name: l.name })),
       citizens: sim.society.citizens.serialize(),
       nextBuildingId: sim.nextBuildingId,
+      waste: sim.waste.serialize(),
+      gridPolicy: sim.utilities.policy,
+      waterStorage: [...sim.utilities.storage],
+      chainStock: { goods: sim.society.chain.goodsStock, raw: sim.society.chain.rawStock },
     },
     camera,
   };
@@ -74,6 +78,7 @@ export function worldFromSave(file: SaveFile): World {
   const w = new World(file.world.seed, file.world.mapType as World['mapType'], false);
   for (const k of ARRAYS) { if (file.world[k]) fromB64(file.world[k], w[k]); else if (!OPTIONAL.has(k)) throw new Error('Sauvegarde incomplète'); }
   w.computeRoadDist();
+  if (!file.world.resources) w.computeResources();
   return w;
 }
 
@@ -89,6 +94,10 @@ export function applySave(sim: Simulation, file: SaveFile): void {
   sim.milestone = s.milestone ?? 0;
   sim.history = s.history ?? [];
   sim.nextBuildingId = s.nextBuildingId ?? 1;
+  sim.waste.restore(s.waste);
+  if (s.gridPolicy) Object.assign(sim.utilities.policy, s.gridPolicy);
+  if (s.waterStorage) sim.utilities.storage = new Map(s.waterStorage);
+  if (s.chainStock) { sim.society.chain.goodsStock = s.chainStock.goods; sim.society.chain.rawStock = s.chainStock.raw; }
   if (s.env) { sim.env.hour = s.env.hour; sim.env.weather = s.env.weather; }
   if (s.demo) { sim.demo.shares = s.demo.shares; sim.demo.education = s.demo.education; }
   sim.transit.budget = (sim.budgets.transport ?? 100) / 100;

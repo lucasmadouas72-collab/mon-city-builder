@@ -14,6 +14,7 @@ interface Snapshot {
   oneway: Uint8Array;
   lights: Uint8Array;
   links: Uint8Array;
+  powerLine: Uint8Array;
   lines: Array<{ kind: 'bus' | 'metro'; stops: number[]; color: string; name: string }>;
   /** Argent dépensé par l'action (remboursé à l'annulation). */
   cost: number;
@@ -36,7 +37,7 @@ export class UndoStack {
     return {
       tiles: w.tiles.slice(), zones: w.zones.slice(), service: w.service.slice(), busStop: w.busStop.slice(),
       trees: w.trees.slice(), heights: w.heights.slice(),
-      roadType: w.roadType.slice(), oneway: w.oneway.slice(), lights: w.lights.slice(), links: w.links.slice(),
+      roadType: w.roadType.slice(), oneway: w.oneway.slice(), lights: w.lights.slice(), links: w.links.slice(), powerLine: w.powerLine.slice(),
       lines: this.sim.transit.lines.map((l) => ({ kind: l.kind, stops: [...l.stops], color: l.color, name: l.name })),
       cost,
     };
@@ -46,7 +47,7 @@ export class UndoStack {
     const w = this.sim.world;
     const eq = (x: ArrayLike<number>, y: ArrayLike<number>) => { for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false; return true; };
     return !eq(a.tiles, w.tiles) || !eq(a.zones, w.zones) || !eq(a.service, w.service) || !eq(a.busStop, w.busStop)
-      || !eq(a.trees, w.trees) || !eq(a.heights, w.heights) || !eq(a.roadType, w.roadType) || !eq(a.oneway, w.oneway) || !eq(a.lights, w.lights) || !eq(a.links, w.links) || a.lines.length !== this.sim.transit.lines.length;
+      || !eq(a.trees, w.trees) || !eq(a.heights, w.heights) || !eq(a.roadType, w.roadType) || !eq(a.oneway, w.oneway) || !eq(a.lights, w.lights) || !eq(a.links, w.links) || !eq(a.powerLine, w.powerLine) || a.lines.length !== this.sim.transit.lines.length;
   }
 
   /** Exécute une action du joueur en mémorisant l'état précédent. */
@@ -100,7 +101,7 @@ export class UndoStack {
     const sim = this.sim, w = sim.world;
     const terrain = s.heights.some((h, i) => h !== w.heights[i]);
     w.tiles.set(s.tiles); w.zones.set(s.zones); w.service.set(s.service); w.busStop.set(s.busStop); w.trees.set(s.trees); w.heights.set(s.heights);
-    w.roadType.set(s.roadType); w.oneway.set(s.oneway); w.lights.set(s.lights); w.links.set(s.links);
+    w.roadType.set(s.roadType); w.oneway.set(s.oneway); w.lights.set(s.lights); w.links.set(s.links); w.powerLine.set(s.powerLine);
     // Les bâtiments incompatibles avec l'état restauré disparaissent
     const cleared: number[] = [];
     for (let k = 0; k < w.bState.length; k++) {
@@ -128,6 +129,7 @@ export class UndoStack {
     ev.emit('treesChanged', undefined);
     ev.emit('buildingsChanged', { tiles: [] });
     ev.emit('transitChanged', undefined);
+    ev.emit('powerLinesChanged', undefined);
     ev.emit('moneyChanged', sim.money);
   }
 }

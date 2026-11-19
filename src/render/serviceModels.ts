@@ -159,6 +159,127 @@ function warningCenter(): THREE.BufferGeometry {
   return b.build();
 }
 
+/** Tour de refroidissement en hyperboloïde (profil tourné). */
+function coolingTower(b: Builder, x: number, z: number, h: number, r: number): void {
+  const pts: THREE.Vector2[] = [];
+  for (let k = 0; k <= 8; k++) { const t = k / 8; pts.push(new THREE.Vector2(r * (0.62 + 0.38 * Math.pow(Math.abs(t - 0.65) / 0.65, 1.6)), t * h)); }
+  b.add(new THREE.LatheGeometry(pts, 16), '#e4e1da', x, 0.03, z);
+  b.add(new THREE.CylinderGeometry(r * 0.75, r * 0.75, 0.01, 16), '#6b6b6b', x, 0.03 + h - 0.01, z);
+}
+
+function nuclearPlant(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#9fa39a');
+  coolingTower(b, -0.2, -0.18, 0.62, 0.2);
+  coolingTower(b, 0.2, -0.22, 0.55, 0.17);
+  b.cyl(0.13, 0.22, 0.22, 0.03, 0.22, '#d9dde1', 16); // enceinte du réacteur
+  b.add(new THREE.SphereGeometry(0.13, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), '#cfd4d9', 0.22, 0.25, 0.22);
+  b.box(0.3, 0.16, 0.2, -0.2, 0.03, 0.26, '#c9c3b8');
+  b.box(0.31, 0.02, 0.21, -0.2, 0.19, 0.26, '#7c8794');
+  return b.build();
+}
+
+function solarFarm(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#9cbf6a');
+  for (let r = 0; r < 4; r++) for (let c = 0; c < 2; c++) {
+    b.add(new THREE.BoxGeometry(0.36, 0.012, 0.15).rotateX(-0.45), '#1e3a5f', -0.2 + c * 0.4, 0.1, -0.33 + r * 0.22);
+    b.box(0.01, 0.07, 0.01, -0.2 + c * 0.4, 0.03, -0.33 + r * 0.22, '#9ca3af');
+  }
+  b.box(0.12, 0.09, 0.08, 0.38, 0.03, 0.4, '#e5e7eb'); // onduleur
+  return b.build();
+}
+
+function hydroDam(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#8f969a');
+  b.add(new THREE.BoxGeometry(0.96, 0.5, 0.22).translate(0, 0.25, -0.2), '#c8c6bf'); // mur du barrage
+  b.box(0.96, 0.04, 0.24, 0, 0.5, -0.2, '#9a9890');
+  for (let k = 0; k < 3; k++) b.box(0.12, 0.3, 0.02, -0.3 + k * 0.3, 0.1, -0.08, '#5b8fb3'); // vannes
+  b.box(0.5, 0.18, 0.24, 0.1, 0.03, 0.22, '#d8d2c4'); // salle des turbines
+  b.box(0.52, 0.03, 0.26, 0.1, 0.21, 0.22, '#3d7fae');
+  b.box(0.18, 0.02, 0.4, -0.35, 0.03, 0.2, '#6aa9d8'); // canal de fuite
+  return b.build();
+}
+
+function substation(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#b8b2a5');
+  for (const [x, z] of [[-0.2, -0.15], [0.12, -0.15], [-0.2, 0.18]]) {
+    b.box(0.16, 0.16, 0.14, x, 0.03, z, '#7d8790'); // transformateurs
+    for (let k = 0; k < 3; k++) b.cyl(0.012, 0.08, x - 0.05 + k * 0.05, 0.19, z, '#e8e2d6', 6); // isolateurs
+  }
+  b.box(0.04, 0.5, 0.04, 0.32, 0.03, 0.25, '#9ca3af');
+  b.box(0.3, 0.03, 0.03, 0.2, 0.5, 0.25, '#9ca3af');
+  b.box(0.9, 0.08, 0.01, 0, 0.03, 0.45, '#8a8f94'); // clôture
+  b.box(0.01, 0.08, 0.9, -0.45, 0.03, 0, '#8a8f94');
+  b.box(0.01, 0.08, 0.9, 0.45, 0.03, 0, '#8a8f94');
+  return b.build();
+}
+
+function interconnect(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#a9b39a');
+  // Grand pylône
+  b.add(new THREE.CylinderGeometry(0.03, 0.14, 1.1, 4).rotateY(Math.PI / 4), '#9ca3af', -0.15, 0.58, -0.1);
+  b.box(0.6, 0.03, 0.03, -0.15, 0.95, -0.1, '#9ca3af');
+  b.box(0.45, 0.03, 0.03, -0.15, 0.78, -0.1, '#9ca3af');
+  b.box(0.24, 0.14, 0.2, 0.25, 0.03, 0.22, '#d6d3cc'); // poste de commande
+  b.cyl(0.11, 0.2, 0.25, 0.03, -0.25, '#5aa9d6', 14); // conduite d'eau
+  b.add(new THREE.CylinderGeometry(0.035, 0.035, 0.6, 8).rotateZ(Math.PI / 2), '#5aa9d6', 0.2, 0.08, 0.0);
+  return b.build();
+}
+
+function waterTreatment(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#b3ada0');
+  for (const [x, z] of [[-0.22, -0.2], [0.18, -0.2]]) { b.cyl(0.17, 0.08, x, 0.03, z, '#c9c4b8', 16); b.cyl(0.15, 0.085, x, 0.03, z, '#4fb3d9', 16); }
+  b.box(0.36, 0.1, 0.2, -0.2, 0.03, 0.22, '#c9c4b8');
+  b.box(0.34, 0.105, 0.18, -0.2, 0.03, 0.22, '#7dd3fc');
+  b.box(0.26, 0.2, 0.24, 0.24, 0.03, 0.22, '#eef2f5');
+  b.gable(0.3, 0.08, 0.28, 0.24, 0.23, 0.22, '#0e7490');
+  return b.build();
+}
+
+function waterTower(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#9cbf6a');
+  for (const [x, z] of [[-0.12, -0.12], [0.12, -0.12], [-0.12, 0.12], [0.12, 0.12]]) b.box(0.03, 0.6, 0.03, x, 0.03, z, '#9ca3af');
+  b.cyl(0.04, 0.6, 0, 0.03, 0, '#7c8794', 8);
+  b.add(new THREE.SphereGeometry(0.22, 16, 10), '#7dd3fc', 0, 0.78, 0);
+  b.cyl(0.18, 0.04, 0, 0.6, 0, '#9ca3af', 16);
+  return b.build();
+}
+
+function incinerator(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#9a958b');
+  b.box(0.56, 0.32, 0.4, -0.12, 0.03, 0.1, '#b9b3a6');
+  b.box(0.57, 0.04, 0.41, -0.12, 0.35, 0.1, '#5d6a64');
+  b.cyl(0.05, 1.1, 0.3, 0.03, -0.25, '#d6d3cc', 10);
+  b.box(0.11, 0.06, 0.11, 0.3, 0.95, -0.25, '#b5513c');
+  b.box(0.2, 0.18, 0.02, -0.12, 0.03, 0.31, '#4b5563'); // fosse de déchargement
+  return b.build();
+}
+
+function recycling(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#b7b2a6');
+  b.box(0.6, 0.24, 0.36, -0.1, 0.03, -0.16, '#d6dde2');
+  b.add(new THREE.CylinderGeometry(0.18, 0.18, 0.6, 10, 1, false, 0, Math.PI).rotateZ(Math.PI / 2).scale(1, 0.4, 1), '#10b981', -0.1, 0.27, -0.16);
+  for (let k = 0; k < 4; k++) b.box(0.14, 0.12, 0.12, -0.32 + k * 0.18, 0.03, 0.3, ['#16a34a', '#2563eb', '#ca8a04', '#9ca3af'][k]);
+  b.box(0.16, 0.08, 0.16, 0.34, 0.03, 0.05, '#8b9198'); // balles compactées
+  return b.build();
+}
+
+function composting(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#8f8a60');
+  for (let k = 0; k < 4; k++) b.add(new THREE.CylinderGeometry(0.08, 0.08, 0.7, 6, 1, false, 0, Math.PI).rotateZ(Math.PI / 2), k % 2 ? '#5b4630' : '#6b5638', 0, 0.03, -0.33 + k * 0.2);
+  b.box(0.18, 0.1, 0.14, 0.34, 0.03, 0.36, '#e3b341');
+  return b.build();
+}
+
+function landfillSite(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#7d7462');
+  b.add(new THREE.ConeGeometry(0.42, 0.3, 8).scale(1, 1, 0.8), '#6f6450', -0.05, 0.18, -0.08);
+  b.add(new THREE.ConeGeometry(0.25, 0.2, 7), '#7b8a5c', 0.25, 0.13, 0.22);
+  for (let k = 0; k < 8; k++) b.box(0.04, 0.03, 0.05, -0.3 + (k % 4) * 0.12, 0.2 + Math.floor(k / 4) * 0.06, -0.15 + (k % 3) * 0.08, ['#d4d4d4', '#2563eb', '#ca8a04', '#a3a3a3'][k % 4]);
+  b.box(0.1, 0.06, 0.16, -0.36, 0.03, 0.34, '#eab308'); // bulldozer
+  b.box(0.96, 0.06, 0.01, 0, 0.03, 0.47, '#8a8f94');
+  return b.build();
+}
+
 export function createServiceModels(): Map<Service, THREE.BufferGeometry> {
   return new Map<Service, THREE.BufferGeometry>([
     [Service.PowerPlant, powerPlant()],
@@ -174,5 +295,16 @@ export function createServiceModels(): Map<Service, THREE.BufferGeometry> {
     [Service.MetroStation, metroStation()],
     [Service.Levee, levee()],
     [Service.WarningCenter, warningCenter()],
+    [Service.NuclearPlant, nuclearPlant()],
+    [Service.SolarFarm, solarFarm()],
+    [Service.HydroDam, hydroDam()],
+    [Service.Substation, substation()],
+    [Service.Interconnect, interconnect()],
+    [Service.WaterTreatment, waterTreatment()],
+    [Service.WaterTower, waterTower()],
+    [Service.Incinerator, incinerator()],
+    [Service.Recycling, recycling()],
+    [Service.Composting, composting()],
+    [Service.LandfillSite, landfillSite()],
   ]);
 }

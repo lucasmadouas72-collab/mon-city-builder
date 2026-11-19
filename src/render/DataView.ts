@@ -6,7 +6,7 @@ import { Overlay } from './Overlay';
 
 export type ViewMode =
   | 'none' | 'traffic' | 'power' | 'water' | 'sewage' | 'garbage'
-  | 'health' | 'education' | 'police' | 'fire' | 'park' | 'happiness' | 'land' | 'transport' | 'air' | 'noise' | 'crime' | 'waterPol' | 'soil' | 'light' | 'damage' | 'risk' | 'rent' | 'occupancy';
+  | 'health' | 'education' | 'police' | 'fire' | 'park' | 'happiness' | 'land' | 'transport' | 'air' | 'noise' | 'crime' | 'waterPol' | 'soil' | 'light' | 'damage' | 'risk' | 'rent' | 'occupancy' | 'resources';
 
 export const VIEW_LABELS: Array<[ViewMode, string]> = [
   ['traffic', 'Trafic'],
@@ -32,13 +32,14 @@ export const VIEW_LABELS: Array<[ViewMode, string]> = [
   ['land', 'Valeur foncière'],
   ['rent', 'Loyers'],
   ['occupancy', 'Occupation des bâtiments'],
+  ['resources', 'Ressources naturelles'],
 ];
 
 const UTIL: Partial<Record<ViewMode, [Utility, Service[]]>> = {
-  power: [Utility.Power, [Service.PowerPlant, Service.WindTurbine]],
-  water: [Utility.Water, [Service.WaterPump]],
+  power: [Utility.Power, [Service.PowerPlant, Service.WindTurbine, Service.NuclearPlant, Service.SolarFarm, Service.HydroDam, Service.Incinerator, Service.Substation, Service.Interconnect]],
+  water: [Utility.Water, [Service.WaterPump, Service.WaterTreatment, Service.WaterTower, Service.Interconnect]],
   sewage: [Utility.Sewage, [Service.Sewage]],
-  garbage: [Utility.Garbage, [Service.Landfill]],
+  garbage: [Utility.Garbage, [Service.Landfill, Service.LandfillSite, Service.Incinerator, Service.Recycling, Service.Composting]],
 };
 const COV: Partial<Record<ViewMode, [Coverage, Service]>> = {
   health: [Coverage.Health, Service.Clinic],
@@ -68,10 +69,11 @@ const COVERED_BY = (name: string, color: string, explanation: string): Legend =>
 const LEGENDS: Record<Exclude<ViewMode, 'none'>, Legend> = {
   traffic: { title: 'Trafic', unit: 'véhicules par case (moyenne glissante)', items: [['#22c55e', 'Fluide (< 0,35)'], ['#a3e635', 'Normal'], ['#facc15', 'Chargé'], ['#f97316', 'Dense'], ['#ef4444', 'Embouteillé (> 2,8)']], explanation: 'Densité de véhicules sur chaque case de route. Les axes rouges ralentissent tous les trajets, y compris les secours.' },
   transport: { title: 'Transports en commun', unit: 'distance à pied d’un arrêt', items: [['#38bdf8', 'Bâtiment desservi par une ligne']], explanation: 'Bâtiments à moins de 6 cases d’un arrêt de bus ou 9 cases d’une station de métro. Les lignes sont tracées en couleur.' },
-  power: { title: 'Électricité', unit: 'raccordement', items: [['#ffffff', 'Centrale, éolienne'], ['#22c55e', 'Alimenté'], ['#ef4444', 'Sans électricité']], explanation: 'L’électricité circule par le réseau routier. Un quartier coupé du réseau ou une production insuffisante laisse des bâtiments sans courant.' },
-  water: { title: 'Eau potable', unit: 'raccordement', items: [['#ffffff', 'Station de pompage'], ['#22c55e', 'Alimenté'], ['#ef4444', 'Sans eau']], explanation: 'La capacité des stations de pompage limite le nombre de bâtiments desservis.' },
+  power: { title: 'Électricité', unit: 'réseau, production, consommation, surcharge', items: [['#ffffff', 'Centrale, sous-station, interconnexion'], ['#9aa1a8', 'Ligne haute tension'], ['#22c55e', 'Alimenté'], ['#f97316', 'Sous-station en surcharge (pertes)'], ['#ef4444', 'Sans électricité']], explanation: 'Le courant circule le long des routes et des lignes haute tension. Les pertes augmentent loin des centrales et des sous-stations. Détails : cliquez sur le panneau Réseaux.' },
+  water: { title: 'Eau potable', unit: 'raccordement, pression et qualité', items: [['#ffffff', 'Pompage, traitement, château d’eau'], ['#22c55e', 'Alimenté'], ['#facc15', 'Basse pression'], ['#a855f7', 'Eau contaminée'], ['#ef4444', 'Sans eau']], explanation: 'Captage, traitement, stockage puis distribution : chaque étape limite le débit. Loin d’une station ou d’un château d’eau, la pression baisse.' },
   sewage: { title: 'Égouts', unit: 'raccordement', items: [['#ffffff', 'Station d’épuration'], ['#22c55e', 'Raccordé'], ['#ef4444', 'Non raccordé']], explanation: 'Sans épuration, les immeubles ne peuvent pas passer au niveau 3.' },
-  garbage: { title: 'Déchets', unit: 'collecte', items: [['#ffffff', 'Centre de tri'], ['#22c55e', 'Collecté'], ['#ef4444', 'Non collecté']], explanation: 'Les déchets non collectés réduisent le bonheur.' },
+  garbage: { title: 'Déchets', unit: 'jours d’accumulation', items: [['#ffffff', 'Centre de traitement ou dépôt'], ['#22c55e', 'Collecté récemment'], ['#facc15', '5 à 10 jours'], ['#f97316', 'Plus de 10 jours'], ['#ef4444', 'Plus de 20 jours']], explanation: 'Les camions partent des centres et collectent autour des quartiers les plus chargés. Les déchets accumulés réduisent le bonheur.' },
+  resources: { title: 'Ressources naturelles', unit: 'terres et gisements', items: [['#a3a33a', 'Terres fertiles (agriculture ×1,3)'], ['#78716c', 'Gisement de minerai (extraction)'], ['#166534', 'Forêt (sylviculture)']], explanation: 'Zonez l’agriculture sur les terres fertiles, l’extraction sur les gisements et la sylviculture près des forêts. Le potentiel éolien, solaire et hydraulique est dans le panneau Réseaux.' },
   health: COVERED_BY('Santé', SERVICE_INFO[Service.Clinic].color, 'Chaque clinique accueille un nombre limité de patients. Les malades vont à la clinique accessible la plus proche qui a de la place.'),
   education: COVERED_BY('Éducation', SERVICE_INFO[Service.School].color, 'Chaque école a un nombre de places limité. Les élèves sont affectés selon leur âge, la distance et les places disponibles.'),
   police: COVERED_BY('Police', SERVICE_INFO[Service.Police].color, 'Zone que les patrouilles atteignent à temps par la route. Les embouteillages la réduisent.'),
@@ -164,6 +166,20 @@ export class DataView {
       const built = w.bState[idx] === BuildState.Built;
       if (m === 'traffic') {
         if (w.tiles[idx] === 1) add(TRAFFIC_LEVELS.find(([max]) => this.sim.traffic.density[idx] < max)![1], idx);
+      } else if (m === 'resources') {
+        const r = w.resources[idx];
+        if (r & 2) add('#78716c', idx);
+        else if (r & 1) add('#a3a33a', idx);
+        else if (w.trees[idx] >= 2) add('#166534', idx);
+      } else if (m === 'power' && w.powerLine[idx] && !w.service[idx]) {
+        add('#9aa1a8', idx);
+      } else if (m === 'garbage' && built) {
+        const lv = this.sim.waste.level(idx);
+        add(lv < 5 ? '#22c55e' : lv < 10 ? '#facc15' : lv < 20 ? '#f97316' : '#ef4444', idx);
+      } else if (m === 'water' && built && ut.hasUtility(idx, Utility.Water) && (ut.contaminated[idx] || ut.lowPressure[idx])) {
+        add(ut.contaminated[idx] ? '#a855f7' : '#facc15', idx);
+      } else if (m === 'power' && built && ut.hasUtility(idx, Utility.Power) && ut.overload[idx]) {
+        add('#f97316', idx);
       } else if (UTIL[m]) {
         const [u, producers] = UTIL[m]!;
         if (producers.includes(w.service[idx])) add('#ffffff', idx);

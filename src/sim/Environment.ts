@@ -94,6 +94,26 @@ export class Environment {
     return this.weather === 'wind' ? 1.5 : this.weather === 'storm' ? 1.2 : this.weather === 'heat' || this.weather === 'fog' ? 0.6 : 1;
   }
 
+  /** Ensoleillement moyen de la journée (centrales solaires) selon la saison et la météo. */
+  solarFactor(month: number): number {
+    const season = [0.95, 1.15, 0.75, 0.45][this.season(month)];
+    const w = this.weather;
+    const sky = w === 'sun' || w === 'heat' ? 1 : w === 'clouds' || w === 'wind' || w === 'frost' ? 0.6 : w === 'fog' ? 0.45 : 0.3;
+    return season * sky;
+  }
+
+  /** Débit des cours d'eau (barrages) : fort au printemps et sous la pluie, faible en canicule. */
+  hydroFactor(month: number): number {
+    const season = [1.15, 0.85, 1, 0.9][this.season(month)];
+    const w = this.weather;
+    return season * (w === 'rain' || w === 'storm' ? 1.15 : w === 'heat' ? 0.6 : w === 'frost' ? 0.8 : 1);
+  }
+
+  /** Disponibilité de l'eau pour le captage (sécheresse en canicule). */
+  get waterFactor(): number {
+    return this.weather === 'heat' ? 0.85 : 1;
+  }
+
   /** Vitesse des véhicules selon la météo. */
   get trafficSpeed(): number {
     switch (this.weather) {

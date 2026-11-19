@@ -24,6 +24,8 @@ export const JOB_MIX: Record<number, [number, number, number]> = {
   [Zone.Logistics]: [0.65, 0.3, 0.05],
   [Zone.Research]: [0.05, 0.25, 0.7],
   [Zone.Tourism]: [0.65, 0.3, 0.05],
+  [Zone.Forestry]: [0.8, 0.18, 0.02],
+  [Zone.Mining]: [0.75, 0.22, 0.03],
 };
 export const HOUSEHOLD_SIZE = 2.4;
 

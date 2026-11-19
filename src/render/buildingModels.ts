@@ -509,6 +509,39 @@ function agriculture(c: Ctx): void {
   if (r() < 0.7) b.tree(fx - 0.3 * s, fz + 0.3 * s, 1.2);
 }
 
+function forestry(c: Ctx): void {
+  const { b, r, W, D, level } = c;
+  b.box(W - 0.04, 1.2, D - 0.04, 0, -1.2, 0, '#b3a994');
+  b.box(W, 0.02, D, 0, 0, 0, '#6d7a3e');
+  // Plantations en rangs
+  const rows = Math.max(2, c.d * 2), cols = Math.max(2, c.f * 3 - 1);
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+    if (i < 2 && j >= rows - 2) continue; // place de la scierie
+    if (r() < 0.15) continue;
+    b.tree(-W / 2 + (i + 0.5) * (W / cols), -D / 2 + (j + 0.5) * ((D - 0.1) / rows), 0.7 + r() * 0.5 + level * 0.1, r() < 0.5 ? '#2f6b34' : '#3f7d3a');
+  }
+  // Scierie et grumes
+  const sx = -W / 2 + 0.3, sz = D / 2 - 0.25;
+  b.box(0.36, 0.16, 0.24, sx, 0.03, sz, '#8b6a4a');
+  b.gable(0.4, 0.1, 0.28, sx, 0.19, sz, '#5b5f66');
+  for (let k = 0; k < 2 + level; k++) b.add(new THREE.CylinderGeometry(0.025, 0.025, 0.3, 6).rotateZ(Math.PI / 2), '#a0764a', sx + 0.36, 0.055 + Math.floor(k / 2) * 0.05, sz - 0.08 + (k % 2) * 0.06);
+}
+
+function mining(c: Ctx): void {
+  const { b, r, W, D, level } = c;
+  base(c, '#857b6c');
+  // Chevalement
+  const hx = -W * 0.2, hz = -D * 0.15, h = 0.5 + level * 0.15;
+  for (const [x, z] of [[-0.08, -0.08], [0.08, -0.08], [-0.08, 0.08], [0.08, 0.08]]) b.box(0.02, h, 0.02, hx + x, 0.03, hz + z, '#6b7280');
+  b.add(new THREE.CylinderGeometry(0.07, 0.07, 0.02, 12).rotateX(Math.PI / 2), '#374151', hx, 0.03 + h, hz);
+  b.box(0.3, 0.16, 0.22, hx + 0.12, 0.03, hz + 0.2, '#9a8f84');
+  // Terrils et minerai
+  b.add(new THREE.ConeGeometry(0.22 + level * 0.04, 0.22 + level * 0.06, 7), '#4b4540', W * 0.25, 0.14 + level * 0.03, -D * 0.2);
+  b.add(new THREE.ConeGeometry(0.14, 0.12, 6), pick(r, ['#8b5a3c', '#7a7a80', '#a0522d']), W * 0.2, 0.09, D * 0.25);
+  b.add(new THREE.BoxGeometry(0.04, 0.02, 0.5).rotateX(-0.4), '#52525b', W * 0.05, 0.16, 0); // convoyeur
+  if (c.f * c.d > 1) b.box(0.08, 0.06, 0.18, -W * 0.35, 0.03, D * 0.3, '#eab308'); // tombereau
+}
+
 // ---------- Tourisme ----------
 
 function tourism(c: Ctx): void {
@@ -588,6 +621,8 @@ const MAKERS: Record<number, (c: Ctx) => void> = {
   [Zone.Logistics]: logistics,
   [Zone.Research]: research,
   [Zone.Tourism]: tourism,
+  [Zone.Forestry]: forestry,
+  [Zone.Mining]: mining,
 };
 
 /** Bibliothèque de modèles, créés à la demande. */

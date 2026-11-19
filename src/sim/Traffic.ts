@@ -16,10 +16,11 @@ export const enum VehicleKind {
   Ambulance = 3,
   FireTruck = 4,
   Police = 5,
+  Garbage = 6,
 }
 
 /** Véhicules d'urgence : prioritaires aux feux, mais pris dans les bouchons. */
-export const isEmergency = (k: VehicleKind) => k >= VehicleKind.Ambulance;
+export const isEmergency = (k: VehicleKind) => k >= VehicleKind.Ambulance && k <= VehicleKind.Police;
 
 const LANE = 0.17; // décalage de la voie par rapport à l'axe de la route
 const CAR_SPEED = 1.9; // cases par seconde à vitesse 1
@@ -127,6 +128,10 @@ export class Traffic {
   private jobs = emptyList();
   private shops = emptyList();
   private factories = emptyList();
+  private primary = emptyList();
+  private depots = emptyList();
+  /** Flux de marchandises du mois (fournis par l'économie) : part des camions et poids de chaque trajet. */
+  freight = { share: 0.12, raw: 0, goods: 1, food: 0, imports: 0 };
   private occupants = new Map<number, Map<number, number>>(); // carrefour → (id véhicule → direction d'entrée)
   private buckets = new Map<number, Vehicle[]>();
   private spawnBudget = 0;
@@ -148,7 +153,7 @@ export class Traffic {
 
   refreshBuildings(capacity: (idx: number) => number): void {
     const w = this.world;
-    const lists = { h: emptyList(), j: emptyList(), s: emptyList(), f: emptyList() };
+    const lists = { h: emptyList(), j: emptyList(), s: emptyList(), f: emptyList(), p: emptyList(), l: emptyList() };
     const add = (l: WeightedList, idx: number, weight: number) => {
       l.total += weight;
       l.tiles.push(idx);
@@ -162,10 +167,12 @@ export class Traffic {
       if (hasJobs(z)) {
         add(lists.j, idx, cap);
         if (kindOf(z) === Zone.Commercial || z === Zone.Mixed) add(lists.s, idx, cap);
-        if (kindOf(z) === Zone.Industrial) add(lists.f, idx, cap * (z === Zone.Logistics ? 2 : 1));
+        if (z === Zone.Industrial) add(lists.f, idx, cap);
+        else if (z === Zone.Logistics) add(lists.l, idx, cap);
+        else if (kindOf(z) === Zone.Industrial) add(lists.p, idx, cap);
       }
     }
-    this.homes = lists.h; this.jobs = lists.j; this.shops = lists.s; this.factories = lists.f;
+    this.homes = lists.h; this.jobs = lists.j; this.shops = lists.s; this.factories = lists.f; this.primary = lists.p; this.depots = lists.l;
   }
 
   private pickWeighted(l: WeightedList): number {
@@ -254,9 +261,9 @@ export class Traffic {
   private spawn(): boolean {
     const r = this.rand();
     let from: number, to: number, kind = VehicleKind.Car;
-    if (r < 0.14 && this.factories.total && this.shops.total) {
-      from = this.pickWeighted(this.factories);
-      to = this.pickWeighted(this.shops);
+    const leg = r < this.freight.share ? this.freightLeg() : null;
+    if (leg) {
+      [from, to] = leg;
       kind = VehicleKind.Truck;
     } else {
       from = this.pickWeighted(this.homes);
@@ -293,6 +300,20 @@ export class Traffic {
     return true;
   }
 
+  /** Trajet d'un camion de marchandises : matières premières, biens manufacturés, denrées, importations. */
+  private freightLeg(): [number, number] | null {
+    const f = this.freight;
+    const total = f.raw + f.goods + f.food + f.imports;
+    if (total <= 0) return null;
+    let r = this.rand() * total;
+    const pick = (a: WeightedList, b: WeightedList): [number, number] | null => (a.total && b.total ? [this.pickWeighted(a), this.pickWeighted(b)] : null);
+    const hub = this.depots.total ? this.depots : this.factories;
+    if ((r -= f.raw) < 0) return pick(this.primary, this.factories.total ? this.factories : hub);
+    if ((r -= f.goods) < 0) return this.rand() < 0.4 && this.depots.total ? pick(this.factories, this.depots) : pick(this.factories, this.shops);
+    if ((r -= f.food) < 0) return pick(this.primary, this.shops);
+    return pick(hub, this.shops);
+  }
+
   // ---------- Bus ----------
 
   addLoopVehicle(line: number, path: number[], start: number, stops: Set<number>, color: string): void {
@@ -312,8 +333,8 @@ export class Traffic {
 
   addMissionVehicle(path: number[], kind: VehicleKind, mission: number): Vehicle {
     const v: Vehicle = {
-      id: this.nextId++, kind, color: kind === VehicleKind.FireTruck ? 0xd92b2b : kind === VehicleKind.Police ? 0x1e3a8a : 0xf8fafc,
-      path, seg: 0, t: 0, speed: 0, maxSpeed: 2.2,
+      id: this.nextId++, kind, color: kind === VehicleKind.FireTruck ? 0xd92b2b : kind === VehicleKind.Police ? 0x1e3a8a : kind === VehicleKind.Garbage ? 0x3f8f3a : 0xf8fafc,
+      path, seg: 0, t: 0, speed: 0, maxSpeed: kind === VehicleKind.Garbage ? 1.8 : 2.2,
       x: 0, z: 0, hx: 1, hz: 0, c: [0, 0, 0, 0, 0, 0], len: 1, wait: 0, holding: -1, age: 0,
       line: 0, loop: false, dwell: 0, stops: null, mission,
     };
@@ -501,7 +522,7 @@ export class Traffic {
       }
       const cur = v.path[v.seg];
       let targetSpeed = v.maxSpeed * this.speedFactor * (ROAD_INFO[this.world.roadType[cur] as RoadType]?.speed ?? 1) * (1 - this.world.roadDamage[cur] * 0.006);
-      const len = v.kind === VehicleKind.Bus || v.kind === VehicleKind.FireTruck ? 0.4 : v.kind === VehicleKind.Truck ? 0.34 : 0.26;
+      const len = v.kind === VehicleKind.Bus || v.kind === VehicleKind.FireTruck ? 0.4 : v.kind === VehicleKind.Truck || v.kind === VehicleKind.Garbage ? 0.34 : 0.26;
       if (v.dwell > 0) { v.dwell -= dt; targetSpeed = 0; }
       if (gap < Infinity) targetSpeed *= Math.max(0, Math.min(1, (gap - len) / SAFE_GAP));
 

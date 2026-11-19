@@ -44,14 +44,15 @@ export function diagnose(sim: Simulation): Issue[] {
 
   // ----- Réseaux -----
   const producers: Record<number, Service[]> = {
-    [Utility.Power]: [Service.PowerPlant, Service.WindTurbine], [Utility.Water]: [Service.WaterPump],
-    [Utility.Sewage]: [Service.Sewage], [Utility.Garbage]: [Service.Landfill],
+    [Utility.Power]: [Service.PowerPlant, Service.WindTurbine, Service.NuclearPlant, Service.SolarFarm, Service.HydroDam, Service.Incinerator, Service.Interconnect],
+    [Utility.Water]: [Service.WaterPump, Service.Interconnect],
+    [Utility.Sewage]: [Service.Sewage], [Utility.Garbage]: [Service.Landfill, Service.LandfillSite, Service.Incinerator, Service.Recycling, Service.Composting],
   };
   const utilActions: Record<number, string> = {
-    [Utility.Power]: 'Construire une centrale au gaz ou des éoliennes (menu Réseaux).',
+    [Utility.Power]: 'Construire une centrale (gaz, solaire, éolien, barrage, nucléaire) ou relier les réseaux par une ligne haute tension (menu Réseaux).',
     [Utility.Water]: "Construire une station de pompage au bord de l'eau (menu Réseaux).",
     [Utility.Sewage]: "Construire une station d'épuration au bord de l'eau (menu Réseaux).",
-    [Utility.Garbage]: 'Construire un centre de tri (menu Réseaux).',
+    [Utility.Garbage]: 'Construire un centre de tri, une décharge ou un centre de recyclage : leurs camions font des tournées (menu Réseaux).',
   };
   const utilView = ['power', 'water', 'sewage', 'garbage'];
   for (const u of [Utility.Power, Utility.Water, Utility.Sewage, Utility.Garbage]) {
@@ -64,8 +65,8 @@ export function diagnose(sim: Simulation): Issue[] {
     if (!any) causes.push(`Aucun équipement ne produit ${UTILITY_NAMES[u].toLowerCase() === 'eau' ? "d'eau" : `de ${UTILITY_NAMES[u].toLowerCase()}`}.`);
     else if (us.demand[u] > us.supply[u]) causes.push(`La consommation (${n(us.demand[u])}) dépasse la production (${n(us.supply[u])}).`);
     if (any && without !== undefined && ut.networkOf(without) >= 0 && us.demand[u] <= us.supply[u]) {
-      causes.push("Ce quartier est sur un réseau routier séparé, qui n'est relié à aucun équipement.");
-      actions.push('Relier ce quartier au reste de la ville par une route.');
+      causes.push("Ce quartier est sur un réseau séparé, qui n'est relié à aucun équipement.");
+      actions.push(u === Utility.Power ? 'Relier ce quartier par une route ou une ligne haute tension.' : 'Relier ce quartier au reste de la ville par une route.');
     }
     if (u <= Utility.Water) actions.push(`Augmenter le budget « ${BUDGET_NAMES.utilities} » pour produire davantage.`);
     out.push({
@@ -73,6 +74,21 @@ export function diagnose(sim: Simulation): Issue[] {
       title: `${UTILITY_NAMES[u]} : ${pct(1 - served)} des bâtiments non desservis`, causes, actions, tile: without, view: utilView[u],
     });
   }
+  // ----- Détails des réseaux (§10) -----
+  const ps = us.power, wsx = us.water, sw = us.sewage, wst = sim.waste.stats;
+  if (ps.overloaded) out.push({ id: 'overload', severity: 'warning', title: `${ps.overloaded} sous-station(s) en surcharge`, causes: ['La consommation des quartiers dépasse la capacité de transformation : les pertes augmentent.'], actions: ['Construire une sous-station supplémentaire dans le quartier.', 'Augmenter le budget des réseaux.'], view: 'power' });
+  const lossShare = ps.consumption ? ps.losses / (ps.consumption + ps.losses) : 0;
+  if (lossShare > 0.08 && ps.consumption > 500) out.push({ id: 'losses', severity: 'warning', title: `Pertes en ligne élevées (${pct(lossShare)})`, causes: ['Des quartiers sont loin de toute centrale ou sous-station.'], actions: ['Construire des sous-stations près des quartiers éloignés.'], view: 'power' });
+  if (sw.overflow > 0 && sw.collected > 300) out.push({ id: 'sewage-overflow', severity: 'serious', title: `Débordement des eaux usées (${n(sw.overflow)} non traitées)`, causes: ['La capacité d’épuration est dépassée : les eaux usées polluent les rivières.'], actions: ['Construire une station d’épuration supplémentaire.'], view: 'waterPol' });
+  if (wsx.lowPressure > 5) out.push({ id: 'pressure', severity: 'warning', title: `${n(wsx.lowPressure)} bâtiment(s) en basse pression d’eau`, causes: ['Trop loin d’une station de pompage ou d’un château d’eau (16 cases pour les tours).'], actions: ['Construire un château d’eau dans le quartier.'], view: 'water' });
+  if (wsx.captage > 2000 && wsx.treated < wsx.captage * 0.5 && st.population > 1000) out.push({ id: 'treatment', severity: 'warning', title: 'Eau peu traitée', causes: [`Seulement ${pct(wsx.captage ? wsx.treated / wsx.captage : 0)} de l’eau pompée est traitée : risque de contamination.`], actions: ['Construire une usine de traitement d’eau.'], view: 'water' });
+  if (wst.saturated) out.push({ id: 'waste-saturated', severity: 'serious', title: 'Centres de déchets saturés', causes: [`${n(wst.waiting)} t attendent d’être traitées ; les camions ne partent plus.`], actions: ['Construire un incinérateur, un centre de recyclage ou une décharge.'], view: 'garbage' });
+  else if (wst.accumulating > built.length * 0.1 && wst.trucks > 0) out.push({ id: 'waste-trucks', severity: 'warning', title: `Collecte insuffisante (${n(wst.accumulating)} bâtiments)`, causes: [`Tous les camions sont en tournée (${wst.trucksBusy}/${wst.trucks}) ou les quartiers sont trop loin des centres.`], actions: ['Construire un centre de collecte plus près des quartiers concernés.', 'Augmenter le budget des réseaux (plus de camions).'], view: 'garbage' });
+  if (wst.landfillCap && wst.landfillUsed > wst.landfillCap * 0.85) out.push({ id: 'landfill-full', severity: 'warning', title: `Décharges pleines à ${pct(wst.landfillUsed / wst.landfillCap)}`, causes: ['Les déchets non recyclés ni incinérés s’entassent.'], actions: ['Construire une nouvelle décharge, ou recycler et incinérer davantage.'], view: 'garbage' });
+  const chain = sim.society.chain;
+  if (chain.unsold > 2000) out.push({ id: 'unsold', severity: 'warning', title: 'Marchandises invendues', causes: ['La production dépasse ce que la ville consomme et peut exporter ou stocker.'], actions: ['Zoner de la logistique (export et stockage).', 'Moins d’industrie, plus de commerces.'] });
+  if (chain.rawNeed > 3000 && chain.rawImport > chain.rawNeed * 0.7) out.push({ id: 'raw-import', severity: 'warning', title: 'Matières premières importées', causes: [`${pct(chain.rawImport / chain.rawNeed)} des matières premières de l’industrie sont importées (30 % plus chères).`], actions: ['Zoner de l’agriculture, de la sylviculture ou de l’extraction (carte « Ressources naturelles »).'], view: 'resources' });
+
   const abandoning = built.filter((k) => ut.problemDays[k] > 0);
   if (abandoning.length) {
     out.push({

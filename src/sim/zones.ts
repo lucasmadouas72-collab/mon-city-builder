@@ -19,6 +19,8 @@ export const enum Zone {
   Logistics = 10,
   Research = 11,
   Tourism = 12,
+  Forestry = 13,
+  Mining = 14,
 }
 
 /** Familles économiques (demande, impôts). */
@@ -27,7 +29,7 @@ export type ZoneType = (typeof ZONES)[number];
 /** Toutes les zones constructibles. */
 export const ALL_ZONES = [
   Zone.ResidentialLow, Zone.Residential, Zone.ResidentialHigh, Zone.Commercial, Zone.CommercialDense, Zone.Office,
-  Zone.Industrial, Zone.Mixed, Zone.Agriculture, Zone.Logistics, Zone.Research, Zone.Tourism,
+  Zone.Industrial, Zone.Mixed, Zone.Agriculture, Zone.Forestry, Zone.Mining, Zone.Logistics, Zone.Research, Zone.Tourism,
 ] as const;
 export type ZoneId = (typeof ALL_ZONES)[number];
 
@@ -141,6 +143,16 @@ export const ZONE_INFO: Record<ZoneId, ZoneInfo> = {
     homes: [0, 0, 0], jobs: [5, 12, 26], lots: [[1, 1, 4], [2, 1, 2], [2, 2, 2]], maxSlope: 0.6, pollution: P(0, 0.6, 0, 1), noiseTolerance: 0.6,
     rules: 'Attire des visiteurs selon les parcs, l’eau proche et la valeur foncière. Ouvert toute l’année.', buildings: 'Hôtels, auberges, résidences de vacances', cost: 2400, unlockPop: 1000, tax: 2.2,
   }),
+  [Zone.Forestry]: make({
+    name: 'Sylviculture', short: 'F', color: '#15803d', kind: Zone.Industrial, category: 'Sylviculture',
+    homes: [0, 0, 0], jobs: [3, 5, 8], lots: [[2, 2, 3], [3, 2, 2], [3, 3, 2], [2, 1, 1]], maxSlope: 0.6, pollution: P(0, 0.4, 0.05, 0), noiseTolerance: 1,
+    rules: 'Produit du bois pour l’industrie. Plus productive près des forêts. Bruit de scierie.', buildings: 'Scieries, parcelles de plantation, stocks de grumes', cost: 800, unlockPop: 0, tax: 1.8,
+  }),
+  [Zone.Mining]: make({
+    name: 'Extraction minière', short: 'X', color: '#78716c', kind: Zone.Industrial, category: 'Extraction',
+    homes: [0, 0, 0], jobs: [6, 12, 18], lots: [[1, 1, 2], [2, 2, 3], [3, 2, 1]], maxSlope: 0.9, pollution: P(0.5, 1, 0.6, 0.2), noiseTolerance: 1,
+    rules: 'Uniquement sur un gisement de minerai (carte Ressources). Pollue l’air, l’eau et les sols.', buildings: 'Chevalements, carrières, terrils', cost: 1500, unlockPop: 0, tax: 1.8,
+  }),
 };
 
 /** Nom des familles économiques (impôts, demande). */
@@ -176,4 +188,5 @@ export const FLOORS: Record<ZoneId, [number, number, number]> = {
   [Zone.Commercial]: [1, 3, 4], [Zone.CommercialDense]: [1, 2, 3], [Zone.Office]: [4, 9, 18],
   [Zone.Industrial]: [1, 2, 3], [Zone.Mixed]: [2, 4, 6], [Zone.Agriculture]: [1, 1, 2],
   [Zone.Logistics]: [1, 1, 2], [Zone.Research]: [2, 4, 7], [Zone.Tourism]: [3, 6, 12],
+  [Zone.Forestry]: [1, 1, 2], [Zone.Mining]: [2, 3, 4],
 };

@@ -20,7 +20,7 @@ export const ROAD_TOOL: Partial<Record<string, RoadType>> = {
   road: RoadType.Street, avenue: RoadType.Avenue, highway: RoadType.Highway, pedestrian: RoadType.Pedestrian,
 };
 
-export type ToolId = 'select' | 'road' | 'avenue' | 'highway' | 'pedestrian' | 'oneway' | 'lights' | `zone${number}` | 'place' | 'move' | 'dezone' | 'bulldoze' | 'busstop' | 'busline' | 'metroline' | 'tUp' | 'tDown' | 'tSmooth' | 'tFlat' | 'tTrees' | `svc${number}`;
+export type ToolId = 'select' | 'road' | 'avenue' | 'highway' | 'pedestrian' | 'oneway' | 'lights' | `zone${number}` | 'place' | 'move' | 'powerline' | 'dezone' | 'bulldoze' | 'busstop' | 'busline' | 'metroline' | 'tUp' | 'tDown' | 'tSmooth' | 'tFlat' | 'tTrees' | `svc${number}`;
 
 const TERRAIN_MODE = { tUp: 'up', tDown: 'down', tSmooth: 'smooth', tFlat: 'flat', tTrees: 'trees' } as const;
 
@@ -417,6 +417,7 @@ export class ToolManager {
       this.act(() => {
         if (ROAD_TOOL[this.tool]) this.sim.buildRoads(tiles, ROAD_TOOL[this.tool]);
         else if (this.tool === 'oneway') this.sim.setOneway(tiles);
+        else if (this.tool === 'powerline') this.sim.buildPowerLine(tiles);
         else if (this.tool === 'lights') this.sim.toggleLights(tiles[tiles.length - 1]);
         else if (this.tool === 'bulldoze') this.sim.bulldoze(tiles);
         else if (zone !== undefined) this.sim.applyZone(tiles, zone);
@@ -435,6 +436,9 @@ export class ToolManager {
     const out: number[] = [];
     if (ROAD_TOOL[this.tool]) {
       return this.roadPath(start, end).tiles;
+    } else if (this.tool === 'powerline') {
+      const a = this.snapCenter(start.i, start.j), b = this.snapCenter(end.i, end.j);
+      return rasterize(sampleLine(a, b), w);
     } else if (this.tool === 'oneway') {
       return this.alongRoads(w.index(start.i, start.j), w.index(end.i, end.j));
     } else if (this.tool === 'bulldoze' || TOOL_ZONE[this.tool] !== undefined) {
@@ -494,6 +498,12 @@ export class ToolManager {
             : { text: est.reasons.join(' · '), kind: 'bad' };
         }
       }
+    } else if (this.tool === 'powerline') {
+      const est = this.sim.estimatePowerLine(tiles);
+      const bad = est.invalid.length > 0 || est.cost > this.sim.money;
+      ov.set([[tiles.filter((t) => !est.invalid.includes(t)), bad ? OverlayColor.invalid : OverlayColor.valid], [est.invalid, OverlayColor.invalid]]);
+      this.tip = !this.dragStart ? { text: 'Ligne haute tension : glissez d’un point à un autre (relie des réseaux séparés ou une centrale isolée)', kind: 'info' }
+        : est.reason ? { text: est.reason, kind: 'bad' } : { text: `Ligne haute tension · ${est.valid.length} case(s) · ${fmt(est.cost)}`, kind: est.cost > this.sim.money ? 'bad' : 'ok' };
     } else if (this.tool === 'oneway') {
       const roads = tiles.filter((t) => this.sim.world.tiles[t] === 1);
       ov.set([[roads, OverlayColor.valid], [tiles.filter((t) => this.sim.world.tiles[t] !== 1), OverlayColor.invalid]]);

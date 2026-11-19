@@ -10,6 +10,7 @@ import { Environment } from './Environment';
 import { Emergency } from './Emergency';
 import { Disasters } from './Disasters';
 import { Society } from './Society';
+import { Waste } from './Waste';
 import { Status } from './Citizens';
 import { Demographics } from './Population';
 import { DIFFICULTY, defaultConfig, type GameConfig } from '../game/config';
@@ -24,9 +25,15 @@ import { ABANDON_DAYS, Coverage, SERVICE_INFO, Service, Utility } from './servic
 import {
   BuildState, hasHomes, hasJobs, jobKind, kindOf, Zone, ZONE_DEPTH, ZONE_INFO, zoneInfo, type LotShape, type ZoneId, type ZoneType,
 } from './zones';
-import { E, N, S, W } from './World';
+import { E, N, Resource, S, W } from './World';
 
 const DAYS_PER_MONTH = 30;
+/** Prix de l'énergie et de l'eau échangées avec les villes voisines (€ par unité et par mois). */
+export const POWER_IMPORT_PRICE = 0.5;
+export const POWER_EXPORT_PRICE = 0.2;
+export const WATER_IMPORT_PRICE = 0.4;
+/** Coût d'une case de ligne haute tension. */
+export const POWER_LINE_COST = 18;
 /** Surcoût de terrassement d'une case de route trop pentue. */
 const GRADE_COST = 40;
 const MODEL_VARIANTS = 4;
@@ -114,6 +121,7 @@ export class Simulation {
   readonly emergency: Emergency;
   readonly disasters: Disasters;
   readonly society: Society;
+  readonly waste: Waste;
   /** Coût des réparations du mois en cours (facturé en fin de mois). */
   private repairAccum = 0;
   /** Coût des réparations du mois précédent. */
@@ -143,6 +151,12 @@ export class Simulation {
     this.emergency = new Emergency(world, this.traffic);
     this.emergency.budget = (svc) => this.budgets[SERVICE_INFO[svc as Exclude<Service, Service.None>].budget] / 100;
     this.disasters = new Disasters(this);
+    this.waste = new Waste(this);
+    this.utilities.garbageOk = (idx) => this.waste.isCollected(idx);
+    this.utilities.garbageLevel = (idx) => this.waste.level(idx);
+    // Les missions des camions de collecte et celles des secours partagent le trafic
+    const emergencyArrive = this.traffic.onMission;
+    this.traffic.onMission = (v) => (this.waste.owns(v) ? this.waste.onArrive(v) : emergencyArrive?.(v));
     this.emergency.onFireReached = (tile) => {
       const w = this.world;
       if (w.forestFire[tile]) {
@@ -316,6 +330,8 @@ export class Simulation {
     this.repairDaily();
     this.generateIncidents();
     this.society.daily();
+    this.utilities.daily();
+    this.waste.daily();
     this.society.citizens.tally();
     if (this.dayCount % 10 === 0) this.computeCrime();
 
@@ -374,7 +390,7 @@ export class Simulation {
         const state = w.bState[idx];
 
         if (state === BuildState.Empty) {
-          if (w.rubble[idx] || w.flooded[idx]) continue;
+          if (w.rubble[idx] || w.flooded[idx] || w.powerLine[idx]) continue;
           // Le zonage rend des parcelles disponibles : un bâtiment n'apparaît que si les conditions sont réunies (§5)
           const score = this.siteScore(idx, zone);
           if (access && demand > 0 && score > 0 && this.isUnlocked(zone) && this.rand() < (0.08 + demand * 0.35) * score) {
@@ -486,6 +502,8 @@ export class Simulation {
     for (let k = 0; k < w.tiles.length; k++) {
       if (w.bState[k] === BuildState.Built) { const p = zoneInfo(w.zones[k])?.pollution; if (p && (p.air || p.water) > 0.3) add(k, 0.008 * w.bLevel[k] * Math.max(p.air, p.water * 0.5), 2); }
       if (w.service[k] === Service.Landfill) add(k, 0.015, 3);
+      if (w.service[k] === Service.LandfillSite) add(k, 0.025, 4);
+      if (w.service[k] === Service.Incinerator) add(k, 0.006, 4);
       if (w.service[k] === Service.PowerPlant) add(k, 0.006, 3);
     }
   }
@@ -728,7 +746,9 @@ export class Simulation {
     }
     const lv = this.society.landValue[idx] || this.landValue(idx);
     if (zone === Zone.ResidentialHigh || zone === Zone.CommercialDense || zone === Zone.Office || zone === Zone.Research) return 0.4 + lv;
-    if (zone === Zone.Agriculture) return 1.3 - lv;
+    if (zone === Zone.Agriculture) return (1.3 - lv) * (this.world.resources[idx] & Resource.Fertile ? 1.4 : 0.7);
+    if (zone === Zone.Mining) return this.world.resources[idx] & Resource.Ore ? 1.2 : 0;
+    if (zone === Zone.Forestry) return 1.2 - lv * 0.5;
     if (zone === Zone.Tourism) return 0.3 + lv + (ut.coverage[idx] & Coverage.Park ? 0.4 : 0);
     return 1;
   }
@@ -747,7 +767,7 @@ export class Simulation {
       order.push(list.splice(k, 1)[0]);
     }
     const i = idx % n, j = Math.floor(idx / n);
-    const free = (t: number) => w.zones[t] === zone && w.bState[t] === BuildState.Empty && !w.rubble[t] && !w.flooded[t] && w.lotRoot[t] < 0 && w.roadDist[t] <= ZONE_DEPTH;
+    const free = (t: number) => w.zones[t] === zone && w.bState[t] === BuildState.Empty && !w.rubble[t] && !w.flooded[t] && !w.powerLine[t] && w.lotRoot[t] < 0 && w.roadDist[t] <= ZONE_DEPTH;
     for (const [front, depth] of order) {
       if (front * depth === 1) return null; // une seule case
       const faces = [S, E, N, W].sort(() => this.rand() - 0.5);
@@ -858,7 +878,16 @@ export class Simulation {
     this.utilities.happinessOffset -= this.disasters.malus;
     this.utilities.offline = this.disasters.offline;
     this.utilities.windFactor = this.env.windFactor;
+    this.utilities.solarFactor = this.env.solarFactor(this.monthIndex);
+    this.utilities.hydroFactor = this.env.hydroFactor(this.monthIndex);
+    this.utilities.waterFactor = this.env.waterFactor;
+    // Camions de marchandises selon les flux de la chaîne de production
+    const ch = this.society.chain;
+    this.traffic.freight = { share: clamp(0.08 + ch.trucks / (ch.trucks + 200000) * 0.25, 0.08, 0.3), raw: ch.rawLocal + ch.rawExport, goods: ch.goodsLocal + ch.goodsExport, food: ch.foodLocal, imports: ch.goodsImport + ch.foodImport + ch.rawImport };
     this.utilities.compute();
+    const wst = this.waste.stats;
+    this.utilities.stats.demand[Utility.Garbage] = wst.produced;
+    this.utilities.stats.supply[Utility.Garbage] = wst.capacity + Math.min(wst.landfillCap - wst.landfillUsed, wst.produced);
     const totalJobs = jobs[Zone.Commercial] + jobs[Zone.Industrial] + jobs[Zone.Office];
     const workers = employed + jobless;
     const unemployment = workers ? jobless / workers : 0;
@@ -887,6 +916,10 @@ export class Simulation {
     // Impôt sur le revenu des ménages et impôt sur les bénéfices des entreprises
     const incomeBy: Record<string, number> = soc.taxIncome(this.taxes, 1);
     incomeBy.tickets = this.lastPassengers * TICKET_PRICE;
+    // Ventes aux villes voisines et revente des matériaux recyclés
+    const ps = this.utilities.stats.power, ws = this.utilities.stats.water;
+    incomeBy.energy = ps.exported * POWER_EXPORT_PRICE;
+    incomeBy.recycling = this.waste.stats.recyclingIncome;
 
     // Dépenses
     let roadUpkeep = 0;
@@ -907,7 +940,8 @@ export class Simulation {
     expensesBy.transport += (this.transit.busCount * BUS_UPKEEP + stops * 10 + this.transit.metroLines * METRO_LINE_UPKEEP) * (this.budgets.transport / 100);
     expensesBy.loans = this.loans.reduce((sum, l) => sum + l.payment, 0);
     expensesBy.reconstruction = this.repairAccum;
-    for (const k in incomeBy) incomeBy[k] = Math.round(incomeBy[k] * (k === 'tickets' ? 1 : this.incomeMul));
+    expensesBy.imports = ps.imported * POWER_IMPORT_PRICE + ws.imported * WATER_IMPORT_PRICE;
+    for (const k in incomeBy) incomeBy[k] = Math.round(incomeBy[k] * (k === 'tickets' || k === 'energy' || k === 'recycling' ? 1 : this.incomeMul));
     for (const k in expensesBy) expensesBy[k] = Math.round(expensesBy[k]);
     const income = Object.values(incomeBy).reduce((a, b) => a + b, 0);
     const expenses = Object.values(expensesBy).reduce((a, b) => a + b, 0);
@@ -936,6 +970,7 @@ export class Simulation {
     const us = this.utilities.stats;
     void us;
     this.society.monthly();
+    this.waste.monthly();
     this.syncDemographics();
     this.popAtMonthStart = this.stats.population;
     this.accumulateSoil();
@@ -1158,6 +1193,12 @@ export class Simulation {
     d[Zone.Industrial] = demand[Zone.Industrial];
     d[Zone.Mixed] = (demand[Zone.Residential] + demand[Zone.Commercial]) / 2 + 0.05;
     d[Zone.Agriculture] = demand[Zone.Industrial] * 0.5 + 0.2 - j(Zone.Agriculture) / (population * 0.05 + 40);
+    const ch = soc.chain;
+    const rawShort = ch.rawNeed ? ch.rawImport / ch.rawNeed : 0;
+    d[Zone.Forestry] = demand[Zone.Industrial] * 0.4 + rawShort * 0.5 + 0.05 - j(Zone.Forestry) / (population * 0.04 + 30);
+    d[Zone.Mining] = demand[Zone.Industrial] * 0.4 + rawShort * 0.6 + 0.05 - j(Zone.Mining) / (population * 0.04 + 30);
+    // La demande industrielle tient compte des débouchés (invendus) et de la logistique (§22)
+    if (ch.unsold > 0) d[Zone.Industrial] = (d[Zone.Industrial] ?? 0) - Math.min(0.4, ch.unsold / (ch.produced + 1));
     d[Zone.Logistics] = demand[Zone.Industrial] * 0.4 + (bs.goodsDemand ? (bs.imports / bs.goodsDemand) * 0.6 : 0) - j(Zone.Logistics) / (population * 0.04 + 30);
     d[Zone.Research] = this.isUnlocked(Zone.Research) ? demand[Zone.Office] * 0.6 + (this.demo.education - 0.35) - j(Zone.Research) / (population * 0.02 + 20) : 0;
     d[Zone.Tourism] = this.isUnlocked(Zone.Tourism) ? this.tourismAppeal * 0.8 - 0.1 - j(Zone.Tourism) / (population * 0.03 + 30) : 0;
@@ -1369,6 +1410,35 @@ export class Simulation {
     return true;
   }
 
+  // ---------- Lignes haute tension ----------
+
+  /** Cases où une ligne peut passer : au-dessus des routes, champs, arbres et de l'eau, pas sur les bâtiments. */
+  estimatePowerLine(path: number[]): CostEstimate {
+    const w = this.world;
+    const out: CostEstimate = { cost: 0, valid: [], invalid: [], reason: null };
+    for (const k of path) {
+      if (w.powerLine[k]) continue;
+      const i = k % w.size, j = Math.floor(k / w.size);
+      const bad = w.service[k] ? 'Un équipement occupe la case' : w.bState[k] ? 'Un bâtiment occupe la case' : w.isWater(i, j) && w.tileMinMax(i, j)[0] < -2.4 ? 'Eau trop profonde' : null;
+      if (bad) { out.invalid.push(k); out.reason ??= bad; continue; }
+      out.valid.push(k);
+      out.cost += POWER_LINE_COST * (w.isWater(i, j) ? 2 : 1);
+    }
+    return out;
+  }
+
+  buildPowerLine(path: number[]): boolean {
+    const est = this.estimatePowerLine(path);
+    if (est.invalid.length) { this.events.emit('notify', { text: est.reason ?? 'Tracé impossible', kind: 'warn' }); return false; }
+    if (!est.valid.length) return false;
+    if (!this.sandbox && est.cost > this.money) { this.events.emit('notify', { text: 'Fonds insuffisants', kind: 'error' }); return false; }
+    for (const k of est.valid) this.world.powerLine[k] = 1;
+    this.spend(est.cost);
+    this.recomputeStats();
+    this.events.emit('powerLinesChanged', undefined);
+    return true;
+  }
+
   // ---------- Bibliothèque : placement manuel, déplacement, amélioration (§6) ----------
 
   /** Coût de construction d'un modèle de la bibliothèque. */
@@ -1444,6 +1514,7 @@ export class Simulation {
       else if (w.service[k] && !ignore?.has(k)) bad = 'Emprise occupée par un équipement';
       else if (w.bState[k] && !ignore?.has(k)) bad = 'Emprise occupée par un bâtiment';
       else if (w.rubble[k]) bad = 'Gravats à déblayer';
+      else if (w.powerLine[k]) bad = 'Ligne haute tension au-dessus';
       if (bad) { out.invalid.push(k); reason(bad); }
       trees += w.trees[k];
     }
@@ -1629,7 +1700,10 @@ export class Simulation {
       else all.add(idx);
     }
     for (const idx of all) {
-      if (w.tiles[idx] === Tile.Road) {
+      if (w.powerLine[idx]) {
+        refund += Math.round(POWER_LINE_COST * 0.3);
+        tiles.push(idx);
+      } else if (w.tiles[idx] === Tile.Road) {
         refund += Math.round((ROAD_INFO[w.roadType[idx] as RoadType]?.cost ?? ROAD_COST) * ROAD_REFUND);
         tiles.push(idx);
       } else if (w.service[idx]) {
@@ -1657,8 +1731,12 @@ export class Simulation {
     const roads: number[] = [];
     const buildings: number[] = [];
     let trees = false, services = false;
+    let lines = false;
     for (const idx of est.tiles) {
-      if (w.tiles[idx] === Tile.Road) {
+      if (w.powerLine[idx]) {
+        w.powerLine[idx] = 0;
+        lines = true;
+      } else if (w.tiles[idx] === Tile.Road) {
         w.tiles[idx] = Tile.Empty;
         w.busStop[idx] = 0;
         w.roadType[idx] = 0;
@@ -1685,6 +1763,7 @@ export class Simulation {
       this.events.emit('buildingsChanged', { tiles: buildings });
     }
     if (trees) this.events.emit('treesChanged', undefined);
+    if (lines) { this.recomputeStats(); this.events.emit('powerLinesChanged', undefined); }
     if (services) {
       this.transit.refreshAll();
       this.recomputeStats();

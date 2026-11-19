@@ -19,6 +19,12 @@ export const MAP_TYPES: Array<[MapType, string, string]> = [
   ['desert', 'Désert', 'Terrain sec avec une oasis'],
 ];
 
+/** Ressources naturelles (bits). */
+export const enum Resource {
+  Fertile = 1,
+  Ore = 2,
+}
+
 export const enum Tile {
   Empty = 0,
   Road = 1,
@@ -85,6 +91,10 @@ export class World {
   readonly bId: Uint32Array;
   /** Bâtiment posé à la main depuis la bibliothèque. */
   readonly bManual: Uint8Array;
+  /** Ligne haute tension sur la case. */
+  readonly powerLine: Uint8Array;
+  /** Ressources naturelles du sous-sol et du sol (bits Resource), déduites du relief et de la graine. */
+  readonly resources: Uint8Array;
 
   readonly mapType: MapType;
 
@@ -119,7 +129,9 @@ export class World {
     this.bStyle = new Uint8Array(n * n);
     this.bId = new Uint32Array(n * n);
     this.bManual = new Uint8Array(n * n);
-    if (generate) this.generate();
+    this.powerLine = new Uint8Array(n * n);
+    this.resources = new Uint8Array(n * n);
+    if (generate) { this.generate(); this.computeResources(); }
   }
 
   /** Recalcule la distance aux routes (parcours en largeur sur la terre ferme). */
@@ -161,6 +173,42 @@ export class World {
     if (hi - lo > MAX_BUILD_SLOPE) return 'Terrain trop pentu';
     if (this.roadDist[this.index(i, j)] > ZONE_DEPTH) return 'Trop loin d\'une route';
     return null;
+  }
+
+  // ---------- Ressources naturelles (§2, §8) ----------
+
+  /** Répartit les terres fertiles et les gisements de minerai (déterministe : graine et relief). */
+  computeResources(): void {
+    const n = this.size, s = this.seed;
+    this.resources.fill(0);
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+      if (this.isWater(i, j)) continue;
+      const [lo, hi] = this.tileMinMax(i, j);
+      const k = j * n + i;
+      // Terres fertiles : plaines basses et plates, plutôt près de l'eau
+      const fert = fbm(i / 16 + 500, j / 16 + 500, s + 101, 3);
+      let nearWater = false;
+      for (let b = j - 5; b <= j + 5 && !nearWater; b += 2) for (let a = i - 5; a <= i + 5; a += 2) if (this.inBounds(a, b) && this.isWater(a, b)) { nearWater = true; break; }
+      const desert = this.mapType === 'desert' ? 0.15 : 0;
+      if (hi - lo < 0.35 && lo < 3 && fert + (nearWater ? 0.12 : 0) - desert > 0.56) this.resources[k] |= Resource.Fertile;
+      // Minerai : en altitude et dans les reliefs
+      const ore = fbm(i / 11 + 900, j / 11 + 900, s + 202, 3);
+      if (ore + Math.min(0.25, lo * 0.04) > 0.68) this.resources[k] |= Resource.Ore;
+    }
+  }
+
+  /** Potentiel énergétique de la région (0 à 1) : éolien, solaire, hydraulique. */
+  energyPotential(): { wind: number; solar: number; hydro: number } {
+    const t = this.mapType;
+    const wind = t === 'coast' || t === 'island' || t === 'archipelago' ? 1 : t === 'mountain' || t === 'hills' ? 0.85 : t === 'plain' || t === 'desert' ? 0.7 : 0.55;
+    const solar = t === 'desert' ? 1 : t === 'coast' || t === 'island' || t === 'archipelago' ? 0.8 : t === 'mountain' || t === 'forest' ? 0.55 : 0.65;
+    const hydro = t === 'river' || t === 'valley' ? 1 : t === 'mountain' || t === 'forest' ? 0.8 : t === 'plain' ? 0.6 : t === 'desert' ? 0.2 : 0.4;
+    return { wind, solar, hydro };
+  }
+
+  /** Distance (en cases) au bord de la carte. */
+  edgeDistance(i: number, j: number): number {
+    return Math.min(i, j, this.size - 1 - i, this.size - 1 - j);
   }
 
   // ---------- Parcelles et bâtiments sur plusieurs cases ----------
@@ -500,6 +548,7 @@ export class World {
     const [lo, hi] = this.tileMinMax(i, j);
     if (hi - lo > MAX_BUILD_SLOPE) return 'Terrain trop pentu';
     if (this.roadDist[idx] !== 1) return 'Doit toucher une route';
+    if (SERVICE_INFO[s as Exclude<Service, 0>].nearEdge && this.edgeDistance(i, j) > 4) return 'Doit être à moins de 5 cases du bord de la carte';
     if (SERVICE_INFO[s as Exclude<Service, 0>].nearWater) {
       let near = false;
       for (let b = j - 2; b <= j + 2 && !near; b++) for (let a = i - 2; a <= i + 2; a++) if (this.inBounds(a, b) && this.isWater(a, b)) { near = true; break; }

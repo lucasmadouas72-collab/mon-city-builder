@@ -435,3 +435,30 @@ label.inline select option { background: var(--bg-solid); }
 .sheet .state.s-warn { background: rgba(251,191,36,0.18); color: var(--warn); }
 .sheet .state.s-ok { background: rgba(74,222,128,0.16); color: #4ade80; }
 @media (max-width: 700px) { .sheet { left: 12px; right: 12px; width: auto; top: auto; bottom: 96px; max-height: 45vh; } }
+
+/* ---- Étape 12 : réseaux et production ---- */
+.ntabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 12px 0 4px; }
+.ntabs button { padding: 6px 12px; border-radius: 8px; background: rgba(255,255,255,0.05); font-size: 13px; font-weight: 600; }
+.ntabs button.active { background: color-mix(in srgb, var(--accent) 28%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent); }
+.nalert { margin: 8px 0; padding: 8px 12px; border-radius: 9px; font-size: 13px; line-height: 1.4; }
+.nalert.k-bad { background: rgba(248,113,113,0.16); color: #fecaca; }
+.nalert.k-warn { background: rgba(251,191,36,0.14); color: #fde68a; }
+.nbar { display: flex; height: 14px; border-radius: 6px; overflow: hidden; background: rgba(255,255,255,0.06); margin: 4px 0 8px; }
+.nbar i { display: block; height: 100%; }
+.sw { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 7px; }
+.networks .neg { color: var(--bad); }
+.ncheck { display: flex; gap: 8px; align-items: center; font-size: 13px; margin: 4px 0; }
+.nchain, .nflow { display: flex; align-items: stretch; gap: 6px; flex-wrap: wrap; margin: 6px 0 10px; }
+.nchain > i, .nflow > i { align-self: center; color: var(--muted); font-style: normal; font-size: 18px; }
+.nstage { flex: 1 1 120px; padding: 10px; border-radius: 10px; background: rgba(255,255,255,0.04); display: grid; gap: 2px; }
+.nstage span { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.nstage b { font-size: 18px; font-variant-numeric: tabular-nums; }
+.nstage small { font-size: 11.5px; color: var(--muted); }
+.nstage.bad { box-shadow: inset 0 0 0 1px rgba(248,113,113,0.6); }
+.nbox { flex: 1 1 170px; padding: 10px; border-radius: 10px; background: rgba(255,255,255,0.04); font-size: 12.5px; display: grid; gap: 3px; }
+.nbox > b { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 2px; }
+.nbox div { display: flex; justify-content: space-between; gap: 8px; }
+.nbox span { color: var(--muted); }
+.nbox em { font-style: normal; font-variant-numeric: tabular-nums; font-weight: 600; }
+.status { cursor: pointer; }
+.status:hover { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent); }

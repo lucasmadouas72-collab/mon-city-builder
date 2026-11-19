@@ -15,6 +15,7 @@ import { TrafficView } from '../render/TrafficView';
 import { VIEW_LABELS, type DataView, type ViewMode } from '../render/DataView';
 import { ALL_ZONES, BuildState, hasHomes, hasJobs, KIND_COLORS, KIND_SHORT, LEVEL_NAMES, STATE_NAMES, STYLE_NAMES, Zone, ZONE_INFO, ZONES, type ZoneId, type ZoneType } from '../sim/zones';
 import { BuildingSheet } from './BuildingSheet';
+import { NetworksPanel } from './NetworksPanel';
 import {
   COVERAGE_NAMES, COVERAGES, SERVICE_INFO, SERVICES, UTILITIES, UTILITY_COLORS, UTILITY_NAMES, UTILITY_SHORT, Utility, type Service,
 } from '../sim/services';
@@ -86,7 +87,8 @@ const GROUPS: Group[] = [
     { id: 'place', label: 'Placer', color: '#38bdf8', sub: 'Modèle de la bibliothèque' },
     { id: 'move', label: 'Déplacer', color: '#a78bfa', sub: 'Saisir puis reposer (R pivote)', desc: 'Cliquez un bâtiment ou un équipement, puis l\'endroit voulu. Coût : 30 % de la construction.' },
   ] },
-  { id: 'utilities', label: 'Réseaux', icon: 'utilities', tools: svcTools('utilities') },
+  { id: 'utilities', label: 'Réseaux', icon: 'utilities', tools: [...svcTools('utilities'),
+    { id: 'powerline', label: 'Ligne haute tension', color: '#9aa1a8', sub: '18 € / case', desc: 'Relie des réseaux électriques séparés, ou une centrale éloignée des routes. Passe au-dessus des routes, des champs et de l’eau.' }] },
   { id: 'services', label: 'Services', icon: 'services', tools: svcTools('services') },
   { id: 'transport', label: 'Transports', icon: 'transport', tools: TRANSPORT_TOOLS },
   { id: 'terrain', label: 'Terrain', icon: 'terrain', tools: [
@@ -164,7 +166,7 @@ export class Hud {
         </div>
       </header>
       <aside class="status panel" id="status">
-        <div class="status-title">Réseaux</div>
+        <div class="status-title">Réseaux <span style="float:right;text-transform:none;letter-spacing:0;color:var(--accent)">Détails ›</span></div>
         ${UTILITIES.map((u) => `<div class="util" data-u="${u}" style="--c:${UTILITY_COLORS[u]}">
           <div class="util-head"><span>${UTILITY_NAMES[u]}</span><b></b></div><div class="util-bar"><i></i></div></div>`).join('')}
         <div class="status-title">Services</div>
@@ -216,6 +218,9 @@ export class Hud {
     this.el('#menu-btn').addEventListener('click', () => this.onMenu?.());
     this.budget = new BudgetPanel(root, sim);
     this.stats = new StatsPanel(root, sim);
+    const networks = new NetworksPanel(root, sim);
+    this.el('#status').title = 'Cliquez pour le détail des réseaux et de la production';
+    this.el('#status').addEventListener('click', () => networks.toggle(true));
     this.el('#stats-btn').addEventListener('click', () => this.stats.toggle());
     this.advisor = new AdvisorPanel(root, sim);
     this.el('#advisor-btn').addEventListener('click', () => { this.toggleJournal(false); this.advisor.toggle(); });
@@ -502,6 +507,12 @@ export class Hud {
       const info = SERVICE_INFO[svc as Exclude<Service, 0>];
       kind = `<span class="dot" style="background:${info.color}"></span>${info.name}`;
       if (info.utility !== undefined) extra += `<dt>Production</dt><dd>${info.capacity!.toLocaleString('fr-FR')}</dd>`;
+      if (svc === 17) { const L2 = ut.substations.get(idx); extra += `<dt>Charge</dt><dd class="${L2 && L2[0] > L2[1] ? 'bad' : ''}">${Math.round(L2?.[0] ?? 0).toLocaleString('fr-FR')} / ${info.treatment!.toLocaleString('fr-FR')}</dd>`; }
+      else if (info.treatment) extra += `<dt>Traitement</dt><dd>${info.treatment.toLocaleString('fr-FR')} ${info.waste ? 't' : ''}/mois</dd>`;
+      if (svc === 20) extra += `<dt>Réserve</dt><dd>${Math.round(ut.storage.get(idx) ?? 0).toLocaleString('fr-FR')} / ${info.storage!.toLocaleString('fr-FR')}</dd>`;
+      if (svc === 24) extra += `<dt>Remplissage</dt><dd>${Math.round(((this.sim.waste.landfill.get(idx) ?? 0) / info.storage!) * 100)} %</dd>`;
+      if (info.trucks) extra += `<dt>Camions</dt><dd>${info.trucks}</dd>`;
+      if (info.utility === 0 && ut.powerGridOf(idx) < 0) extra += `<dt>Réseau</dt><dd class="bad">Non relié (route ou ligne)</dd>`;
       if (info.radius) extra += `<dt>Portée</dt><dd>${info.radius} cases de route</dd>`;
       const L = ut.loads.get(idx);
       if (L) {
@@ -514,7 +525,7 @@ export class Hud {
         extra += `<dt>Véhicules</dt><dd>${this.sim.emergency.inService(idx)} en mission / ${total}</dd>`;
       }
       extra += `<dt>Entretien</dt><dd>${fmt(info.upkeep)}/mois</dd>`;
-      if (ut.networkOf(idx) < 0) extra += `<dt>État</dt><dd class="bad">Pas relié aux routes</dd>`;
+      if (ut.networkOf(idx) < 0 && !(info.utility === 0 && ut.powerGridOf(idx) >= 0)) extra += `<dt>État</dt><dd class="bad">Pas relié aux routes</dd>`;
     }
     if (zone) {
       const info = ZONE_INFO[zone];

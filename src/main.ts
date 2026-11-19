@@ -10,6 +10,7 @@ import { TransitView } from './render/TransitView';
 import { Atmosphere } from './render/Atmosphere';
 import { TrafficLights } from './render/TrafficLights';
 import { DisasterView } from './render/DisasterView';
+import { PowerLines } from './render/PowerLines';
 import { DisasterPanel } from './ui/DisasterPanel';
 import { Simulation } from './sim/Simulation';
 import { World } from './sim/World';
@@ -56,6 +57,9 @@ function startGame(config: GameConfig, file?: SaveFile): void {
   const atmosphere = new Atmosphere(view, world);
   const lights = new TrafficLights(world, sim.traffic);
   const disasterView = new DisasterView(sim);
+  const powerLines = new PowerLines(world);
+  view.scene.add(powerLines.group);
+  sim.events.on('powerLinesChanged', () => powerLines.rebuild());
   view.scene.add(disasterView.group);
   disasterView.refreshFlood();
   sim.events.on('shake', ({ strength }) => cam.shake(strength));
@@ -159,6 +163,7 @@ function startGame(config: GameConfig, file?: SaveFile): void {
       lastTerrain = now;
       view.rebuildTerrain(world);
       transitView.rebuild();
+      powerLines.rebuild();
     }
     trafficView.update();
     lights.update();

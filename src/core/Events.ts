@@ -32,6 +32,7 @@ export interface GameEvents extends Record<string, unknown> {
   milestone: { index: number };
   buildingsChanged: { tiles: number[] };
   buildingsEvolved: { tiles: number[] };
+  powerLinesChanged: void;
   statsChanged: import('../sim/Simulation').CityStats;
   moneyChanged: number;
   dateChanged: { day: number; month: number; year: number };
