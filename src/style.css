@@ -129,3 +129,10 @@ kbd {
   .toolbar button span { overflow: hidden; text-overflow: ellipsis; max-width: 54px; white-space: nowrap; }
   .help { display: none; }
 }
+
+/* ---- Phase 3 : trafic ---- */
+.views { display: flex; gap: 4px; }
+.views button { height: 34px; padding: 0 12px; border-radius: 9px; display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: var(--muted); background: rgba(255,255,255,0.05); }
+.views button svg { width: 17px; height: 17px; }
+.views button:hover { color: var(--text); }
+.views button.active { color: var(--bg-solid); background: #facc15; }

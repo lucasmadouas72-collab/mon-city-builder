@@ -3,6 +3,7 @@ import { GAME_NAME, MAP_SIZE } from './config';
 import { CameraController } from './input/CameraController';
 import { ToolManager } from './input/ToolManager';
 import { SceneRenderer } from './render/SceneRenderer';
+import { TrafficView } from './render/TrafficView';
 import { Simulation } from './sim/Simulation';
 import { World } from './sim/World';
 import { Hud } from './ui/Hud';
@@ -15,7 +16,9 @@ const sim = new Simulation(world);
 const view = new SceneRenderer(container, world);
 const cam = new CameraController(view.camera, view.renderer.domElement, MAP_SIZE);
 const tools = new ToolManager(sim, view, cam, view.renderer.domElement);
-new Hud(document.getElementById('hud')!, sim, tools);
+const trafficView = new TrafficView(world, sim.traffic);
+view.scene.add(trafficView.group);
+new Hud(document.getElementById('hud')!, sim, tools, trafficView);
 tools.setTool('road');
 
 sim.events.on('roadsChanged', () => {
@@ -36,6 +39,7 @@ function frame(now: number) {
   last = now;
   sim.update(dt);
   cam.update(dt);
+  trafficView.update(now / 1000);
   view.render(now / 1000);
   requestAnimationFrame(frame);
 }
@@ -43,4 +47,4 @@ requestAnimationFrame(frame);
 document.getElementById('loading')?.remove();
 
 // Accès console pour le débogage
-Object.assign(window, { game: { world, sim, view, cam, tools } });
+Object.assign(window, { game: { world, sim, view, cam, tools, trafficView } });

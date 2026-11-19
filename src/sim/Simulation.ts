@@ -4,6 +4,7 @@ import {
 import { Emitter, type GameEvents } from '../core/Events';
 import { rng } from '../core/noise';
 import { Tile, World } from './World';
+import { Traffic } from './Traffic';
 import { BuildState, Zone, ZONE_DEPTH, ZONE_INFO, type ZoneType } from './zones';
 
 const DAYS_PER_MONTH = 30;
@@ -52,8 +53,11 @@ export class Simulation {
   private zoned: number[] = [];
   private zonedDirty = true;
 
+  readonly traffic: Traffic;
+
   constructor(world: World) {
     this.world = world;
+    this.traffic = new Traffic(world);
     this.recomputeStats();
   }
 
@@ -77,6 +81,11 @@ export class Simulation {
 
   /** Avance la simulation d'un temps réel dt (s), par pas fixes. */
   update(dt: number): void {
+    const scaled = Math.min(dt, 0.1) * this.speed;
+    // Trafic : pas variable (mouvement fluide), découpé pour rester stable en vitesse rapide
+    const sub = Math.ceil(scaled / 0.05);
+    const target = this.traffic.targetVehicles(this.stats.population, this.stats.totalJobs);
+    for (let k = 0; k < sub; k++) this.traffic.update(scaled / sub, target);
     this.accumulator += Math.min(dt, 0.25) * this.speed;
     while (this.accumulator >= SIM_STEP) {
       this.accumulator -= SIM_STEP;
@@ -244,6 +253,7 @@ export class Simulation {
     for (const z of [Zone.Commercial, Zone.Industrial, Zone.Office] as const) income += jobs[z] * ZONE_INFO[z].tax;
     const expenses = this.roadCount * ROAD_UPKEEP_MONTH;
 
+    this.traffic.refreshBuildings((idx) => this.capacity(idx));
     const prevPop = this.stats.population;
     this.stats = { population, jobs, totalJobs, workers, buildings, demand, income: Math.round(income), expenses: Math.round(expenses) };
     this.events.emit('statsChanged', this.stats);
@@ -331,6 +341,7 @@ export class Simulation {
 
   private onRoadsChanged(tiles: number[]): void {
     this.world.computeRoadDist();
+    this.traffic.validate();
     this.recomputeStats();
     this.events.emit('roadsChanged', { tiles });
   }

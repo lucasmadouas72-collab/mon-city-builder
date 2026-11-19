@@ -1,6 +1,7 @@
 import { GAME_NAME } from '../config';
 import { fmt, type HoverInfo, type ToolId, type ToolManager, type Tooltip } from '../input/ToolManager';
 import type { CityStats, Simulation } from '../sim/Simulation';
+import { TrafficView } from '../render/TrafficView';
 import { BuildState, LEVEL_NAMES, Zone, ZONE_INFO, ZONES, type ZoneType } from '../sim/zones';
 
 const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -11,6 +12,7 @@ const ICONS: Record<string, string> = {
   bulldoze: '<path d="M3 17h11v-5H8l-2 5"/><circle cx="6" cy="19" r="2"/><circle cx="12" cy="19" r="2"/><path d="M14 13l4-4 3 3-4 4z"/>',
   zone: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 12h16M12 4v16" opacity=".5"/>',
   dezone: '<rect x="4" y="4" width="16" height="16" rx="2" stroke-dasharray="3 3"/><path d="M9 9l6 6M15 9l-6 6"/>',
+  traffic: '<rect x="7" y="2" width="10" height="20" rx="3"/><circle cx="12" cy="7" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="17" r="1.6"/>',
   pause: '<path d="M8 5v14M16 5v14"/>',
   play1: '<path d="M8 5l11 7-11 7z"/>',
   play2: '<path d="M4 5l8 7-8 7zM12 5l8 7-8 7z"/>',
@@ -35,7 +37,7 @@ const TOOLS: Array<{ id: ToolId; label: string; key: string; icon: string; zone?
 export class Hud {
   private el = (sel: string) => this.root.querySelector(sel) as HTMLElement;
 
-  constructor(private root: HTMLElement, private sim: Simulation, tools: ToolManager) {
+  constructor(private root: HTMLElement, private sim: Simulation, tools: ToolManager, private traffic: TrafficView) {
     root.innerHTML = `
       <header class="topbar panel">
         <div class="brand"><span class="logo"></span>${GAME_NAME}</div>
@@ -43,10 +45,12 @@ export class Hud {
         <div class="stat"><span class="label">Solde / mois</span><span class="value" id="balance"></span></div>
         <div class="stat"><span class="label">Population</span><span class="value" id="pop">0</span></div>
         <div class="stat"><span class="label">Emplois</span><span class="value" id="jobs">0</span></div>
+        <div class="stat" title="Vitesse moyenne des véhicules par rapport à leur vitesse normale"><span class="label">Trafic</span><span class="value" id="flow">–</span></div>
         <div class="demand" id="demand" title="Demande de la ville par type de zone">
           ${ZONES.map((z) => `<div class="bar" data-zone="${z}" style="--c:${ZONE_INFO[z].color}"><div class="track"><i></i></div><span>${ZONE_INFO[z].short}</span></div>`).join('')}
         </div>
         <div class="spacer"></div>
+        <div class="views"><button id="view-traffic" title="Vue trafic (T)">${icon('traffic')}<span>Trafic</span></button></div>
         <div class="date" id="date"></div>
         <div class="speeds" id="speeds">
           ${['pause', 'play1', 'play2', 'play3'].map((n, k) => `<button data-speed="${k}" title="${k === 0 ? 'Pause (Espace)' : `Vitesse ${k}`}">${icon(n)}</button>`).join('')}
@@ -76,12 +80,18 @@ export class Hud {
     });
     this.el('#help-close').addEventListener('click', () => this.el('#help').remove());
 
+    this.el('#view-traffic').addEventListener('click', () => traffic.toggle());
+    traffic.onToggle = (on) => this.el('#view-traffic').classList.toggle('active', on);
+    setInterval(() => this.updateTraffic(), 500);
+
     let lastSpeed = 1;
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Space') {
         e.preventDefault();
         if (sim.speedIndex > 0) { lastSpeed = sim.speedIndex; sim.setSpeed(0); } else sim.setSpeed(lastSpeed);
       }
+      if (e.code === 'KeyT') traffic.toggle();
+      if (e.code === 'KeyT') this.traffic.toggle();
       const t = TOOLS.find((t) => e.code === `Digit${t.key}` || e.code === `Numpad${t.key}`);
       if (t) tools.setTool(t.id);
     });
@@ -136,6 +146,16 @@ export class Hud {
     });
   }
 
+  private updateTraffic(): void {
+    const t = this.sim.traffic;
+    const el = this.el('#flow');
+    if (!t.vehicles.length) { el.textContent = '–'; el.className = 'value'; return; }
+    const pct = Math.round(t.flow * 100);
+    el.textContent = `${pct} %`;
+    el.className = `value ${pct >= 70 ? 'positive' : pct < 45 ? 'negative' : ''}`;
+    el.parentElement!.title = `${t.vehicles.length} véhicules en circulation · ${t.tripsCompleted} trajets terminés`;
+  }
+
   private updateDate(): void {
     const d = this.sim.date;
     this.el('#date').textContent = `${d.day} ${MONTHS[d.month]} an ${d.year}`;
@@ -160,6 +180,10 @@ export class Hud {
     const state = w.bState[idx];
     let kind = w.isRoad(h.i, h.j) ? 'Route' : w.terrainLabel(h.i, h.j);
     let extra = '';
+    if (w.isRoad(h.i, h.j)) {
+      const d = this.sim.traffic.density[idx];
+      extra = `<dt>Circulation</dt><dd>${TrafficView.label(d)}</dd><dt>Véhicules</dt><dd>${d.toFixed(1)}</dd>`;
+    }
     if (zone) {
       const info = ZONE_INFO[zone];
       kind = `<span class="dot" style="background:${info.color}"></span>${info.name}`;
