@@ -3,7 +3,7 @@ import type { Simulation } from '../sim/Simulation';
 import {
   BUDGET_KEYS, BUDGET_NAMES, LOAN_OFFERS, MAX_LOANS, MAX_TAX, MIN_TAX, loanPayment,
 } from '../sim/economy';
-import { ZONE_INFO, ZONES } from '../sim/zones';
+import { KIND_COLORS, KIND_NAMES, ZONES } from '../sim/zones';
 
 const INCOME_NAMES: Record<string, string> = {
   residential: 'Impôts résidentiels',
@@ -30,8 +30,8 @@ export class BudgetPanel {
           <section>
             <h3>Impôts</h3>
             <p class="hint">Plus d'impôts : plus de recettes, mais moins de demande. Le résidentiel influence aussi le bonheur.</p>
-            ${ZONES.map((z) => `<label class="slider" style="--c:${ZONE_INFO[z].color}">
-              <span>${ZONE_INFO[z].name}</span>
+            ${ZONES.map((z) => `<label class="slider" style="--c:${KIND_COLORS[z]}">
+              <span>${KIND_NAMES[z]}</span>
               <input type="range" id="tax-${z}" min="${MIN_TAX}" max="${MAX_TAX}" step="1" data-tax="${z}">
               <b id="tax-v-${z}"></b></label>`).join('')}
             <h3>Budgets des services</h3>

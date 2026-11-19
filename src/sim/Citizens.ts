@@ -18,6 +18,12 @@ export const JOB_MIX: Record<number, [number, number, number]> = {
   [Zone.Commercial]: [0.6, 0.35, 0.05],
   [Zone.Industrial]: [0.6, 0.35, 0.05],
   [Zone.Office]: [0.1, 0.4, 0.5],
+  [Zone.CommercialDense]: [0.6, 0.33, 0.07],
+  [Zone.Mixed]: [0.65, 0.3, 0.05],
+  [Zone.Agriculture]: [0.8, 0.18, 0.02],
+  [Zone.Logistics]: [0.65, 0.3, 0.05],
+  [Zone.Research]: [0.05, 0.25, 0.7],
+  [Zone.Tourism]: [0.65, 0.3, 0.05],
 };
 export const HOUSEHOLD_SIZE = 2.4;
 

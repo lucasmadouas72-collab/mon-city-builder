@@ -102,10 +102,14 @@ export class UndoStack {
     w.tiles.set(s.tiles); w.zones.set(s.zones); w.service.set(s.service); w.busStop.set(s.busStop); w.trees.set(s.trees); w.heights.set(s.heights);
     w.roadType.set(s.roadType); w.oneway.set(s.oneway); w.lights.set(s.lights); w.links.set(s.links);
     // Les bâtiments incompatibles avec l'état restauré disparaissent
+    const cleared: number[] = [];
     for (let k = 0; k < w.bState.length; k++) {
-      if (w.bState[k] !== BuildState.Empty && (w.zones[k] === Zone.None || w.tiles[k] === 1 || w.service[k])) {
-        w.bState[k] = BuildState.Empty; w.bLevel[k] = 0; w.bTimer[k] = 0;
-      }
+      if (w.bState[k] !== BuildState.Empty && (w.zones[k] === Zone.None || w.tiles[k] === 1 || w.service[k])) cleared.push(k);
+    }
+    // Un bâtiment sur plusieurs cases disparaît en entier
+    for (const k of cleared) {
+      for (const t of w.lotTiles(k)) { w.bState[t] = BuildState.Empty; w.bLevel[t] = 0; w.bTimer[t] = 0; w.bId[t] = 0; }
+      w.clearLot(k);
     }
     if (Number.isFinite(sim.money)) sim.money += refund;
     for (const l of [...sim.transit.lines]) sim.transit.removeLine(l.id);

@@ -1,5 +1,5 @@
 import type { World } from './World';
-import { BuildState, Zone } from './zones';
+import { BuildState, hasHomes } from './zones';
 import { Coverage, SERVICE_INFO, Service } from './services';
 import { DIRS8, ROAD_INFO, type RoadType } from './roads';
 
@@ -141,7 +141,7 @@ export function computeReach(
   // Affectation des élèves et des patients à l'établissement le plus proche qui a de la place
   const assign = (type: Service, bit: Coverage, demandOf: (b: number) => number, kind: 'school' | 'clinic') => {
     const list = buildings
-      .filter((b) => w.zones[b] === Zone.Residential)
+      .filter((b) => hasHomes(w.zones[b]))
       .map((b) => ({ b, need: demandOf(b), opts: (offers.get(b) ?? []).filter(([s]) => w.service[s] === type).sort((x, y) => x[1] - y[1]) }))
       .sort((x, y) => (x.opts[0]?.[1] ?? 99) - (y.opts[0]?.[1] ?? 99));
     for (const { b, need, opts } of list) {

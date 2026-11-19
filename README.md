@@ -21,7 +21,8 @@ Puis ouvrir l'adresse affichée (http://localhost:5173).
 | Tourner la caméra | clic droit, ou A / E |
 | Zoomer | molette |
 | Déplacer la caméra | clic molette, ou Z Q S D / flèches |
-| Outils | 1 Sélection · 2 Route · 3 Résidentiel · 4 Commercial · 5 Industriel · 6 Bureaux · 7 Dézoner · 8 Démolir |
+| Outils | 1 Sélection · 2 Route · 3 Résidentiel moyen · 4 Commerce local · 5 Industrie · 6 Bureaux · 7 Dézoner · 8 Démolir · 9 Bibliothèque de bâtiments |
+| Bâtiments | clic sur un bâtiment : fiche complète · R pivoter · Suppr démolir · menu Bâtiments : placer un modèle, déplacer |
 | Routes | menu Routes · tracé Droite (aimanté à 15°, Maj = angle libre), Courbe (3 clics : départ, courbure, arrivée) ou En L · touche C pour changer |
 | Caméra | F centrer · V vue de dessus · Retour arrière vue précédente · Alt+1..4 mémoriser · Maj+1..4 rappeler |
 | Zoner | cliquer-glisser une zone près d'une route |
@@ -54,11 +55,11 @@ Puis ouvrir l'adresse affichée (http://localhost:5173).
 - [x] Étape 8 : capacités des écoles et cliniques (élèves affectés par âge, distance et places ; temps d'attente), couverture des services calculée par la route avec les embouteillages, pompiers / ambulances / police en véhicules pris dans le trafic, délinquance et délits, conseiller (gravité, causes probables, actions, « Voir sur la carte »), légendes des cartes de données, indicateurs cliquables
 - [x] Étape 9 : catastrophes (inondations, feux de forêt, tempêtes et tornades, séismes, accidents industriels, pannes électriques), fréquence réglable ou désactivable, digues et centre d'alerte, évacuation, bâtiments endommagés, gravats, réparations facturées, aide régionale, pollution de l'eau (eau contaminée), des sols et lumineuse, vent, cartes Dégâts et Risques
 - [x] Étape 10 : habitants individuels et foyers (âge, éducation, statut, emploi, revenus, santé, bonheur) mis à jour par lots, cycle de vie (naissances, études, emploi, retraite, décès, départ du foyer), immigration et émigration, déménagements, marché du logement (loyers, logements vacants, coût de la vie), emplois par qualification, entreprises (recettes, coûts, bénéfice, effectif selon les ventes, licenciements, faillites), marchandises importées/exportées, impôts sur les revenus et les bénéfices, 9 besoins, cartes Loyers et Occupation
+- [x] Étape 11 : 12 types de zones (résidentiel faible, moyen, fort ; commerce local et dense ; bureaux ; industrie ; zone mixte ; agriculture, logistique, recherche, tourisme), parcelles découpées selon la façade, la profondeur et la pente, bâtiments de 1×1 à 3×3, 4 styles architecturaux selon la région et le quartier, bibliothèque de bâtiments (placement manuel, rotation, déplacement, vérification du terrain), état abandonné et réhabilitation, fiche bâtiment complète, évolutions annoncées sans bloquer
 
 ### Prochaines étapes (cahier des charges)
 
 - [ ] Routes : tunnels, échangeurs dédiés, routes surélevées, pistes cyclables, nombre de voies réglable
-- [ ] Bâtiments sur plusieurs cases, placement manuel et rotation, styles architecturaux
 - [ ] Quartiers nommés avec leurs propres règles et impôts
 - [ ] Tramway, trains, ports, aéroports, taxis, vélos
 - [ ] Industries spécialisées et chaînes de production, import/export

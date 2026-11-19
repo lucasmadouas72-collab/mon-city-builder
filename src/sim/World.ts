@@ -73,6 +73,18 @@ export class World {
   readonly soilPol: Float32Array;
   /** Feux tricolores sur un carrefour. */
   readonly lights: Uint8Array;
+  /** Parcelle multi-cases : indice de la case d'ancrage (coin nord-ouest), -1 pour un bâtiment d'une case. */
+  readonly lotRoot: Int32Array;
+  /** Taille de la parcelle sur la case d'ancrage : largeur (x) | hauteur (z) << 4. */
+  readonly lotSize: Uint8Array;
+  /** Orientation imposée de la façade (bit N/E/S/W), 0 = vers la route la plus proche. */
+  readonly bFace: Uint8Array;
+  /** Style architectural imposé (1 à 4), 0 = style du quartier. */
+  readonly bStyle: Uint8Array;
+  /** Identifiant unique et stable du bâtiment. */
+  readonly bId: Uint32Array;
+  /** Bâtiment posé à la main depuis la bibliothèque. */
+  readonly bManual: Uint8Array;
 
   readonly mapType: MapType;
 
@@ -101,6 +113,12 @@ export class World {
     this.flooded = new Uint8Array(n * n);
     this.forestFire = new Uint8Array(n * n);
     this.soilPol = new Float32Array(n * n);
+    this.lotRoot = new Int32Array(n * n).fill(-1);
+    this.lotSize = new Uint8Array(n * n);
+    this.bFace = new Uint8Array(n * n);
+    this.bStyle = new Uint8Array(n * n);
+    this.bId = new Uint32Array(n * n);
+    this.bManual = new Uint8Array(n * n);
     if (generate) this.generate();
   }
 
@@ -143,6 +161,106 @@ export class World {
     if (hi - lo > MAX_BUILD_SLOPE) return 'Terrain trop pentu';
     if (this.roadDist[this.index(i, j)] > ZONE_DEPTH) return 'Trop loin d\'une route';
     return null;
+  }
+
+  // ---------- Parcelles et bâtiments sur plusieurs cases ----------
+
+  /** Case d'ancrage du bâtiment qui occupe la case k. */
+  anchorOf(k: number): number {
+    const r = this.lotRoot[k];
+    return r >= 0 ? r : k;
+  }
+
+  /** Largeur (x) et hauteur (z) en cases du bâtiment ancré en a. */
+  lotDims(a: number): [number, number] {
+    if (this.lotRoot[a] !== a) return [1, 1];
+    const s = this.lotSize[a];
+    return [Math.max(1, s & 15), Math.max(1, s >> 4)];
+  }
+
+  /** Toutes les cases du bâtiment qui occupe la case k. */
+  lotTiles(k: number): number[] {
+    const a = this.anchorOf(k);
+    const [gw, gh] = this.lotDims(a);
+    if (gw === 1 && gh === 1) return [a];
+    const out: number[] = [];
+    for (let dj = 0; dj < gh; dj++) for (let di = 0; di < gw; di++) out.push(a + dj * this.size + di);
+    return out;
+  }
+
+  /** Associe des cases à une parcelle (ancrage = coin nord-ouest). */
+  setLot(a: number, gw: number, gh: number): void {
+    const n = this.size;
+    for (let dj = 0; dj < gh; dj++) for (let di = 0; di < gw; di++) this.lotRoot[a + dj * n + di] = gw * gh > 1 ? a : -1;
+    this.lotSize[a] = gw * gh > 1 ? gw | (gh << 4) : 0;
+  }
+
+  /** Dissout la parcelle de la case k (ses cases redeviennent indépendantes). */
+  clearLot(k: number): number[] {
+    const tiles = this.lotTiles(k);
+    for (const t of tiles) { this.lotRoot[t] = -1; this.lotSize[t] = 0; this.bFace[t] = 0; this.bStyle[t] = 0; this.bManual[t] = 0; }
+    return tiles;
+  }
+
+  /** Différence d'altitude sur un rectangle de cases (pente de la parcelle). */
+  rectSlope(i0: number, j0: number, gw: number, gh: number): number {
+    let lo = Infinity, hi = -Infinity;
+    for (let j = j0; j <= j0 + gh; j++) for (let i = i0; i <= i0 + gw; i++) {
+      const h = this.corner(i, j);
+      if (h < lo) lo = h;
+      if (h > hi) hi = h;
+    }
+    return hi - lo;
+  }
+
+  /** Altitude maximale d'un rectangle (pour poser le bâtiment). */
+  rectTop(i0: number, j0: number, gw: number, gh: number): number {
+    let hi = -Infinity;
+    for (let j = j0; j <= j0 + gh; j++) for (let i = i0; i <= i0 + gw; i++) hi = Math.max(hi, this.corner(i, j));
+    return hi;
+  }
+
+  /** Façade d'un rectangle : côté qui touche une route (S, E, N, O), sinon la route la plus proche. */
+  rectFacing(i0: number, j0: number, gw: number, gh: number): number {
+    const count = (cells: Array<[number, number]>) => cells.filter(([a, b]) => this.isRoad(a, b)).length;
+    const side = (dir: number): Array<[number, number]> => {
+      const out: Array<[number, number]> = [];
+      if (dir === S) for (let i = i0; i < i0 + gw; i++) out.push([i, j0 + gh]);
+      if (dir === N) for (let i = i0; i < i0 + gw; i++) out.push([i, j0 - 1]);
+      if (dir === E) for (let j = j0; j < j0 + gh; j++) out.push([i0 + gw, j]);
+      if (dir === W) for (let j = j0; j < j0 + gh; j++) out.push([i0 - 1, j]);
+      return out;
+    };
+    let best = 0, bestN = 0;
+    for (const d of [S, E, N, W]) { const c = count(side(d)); if (c > bestN) { bestN = c; best = d; } }
+    return best || this.facing(i0, j0);
+  }
+
+  /** Orientation de la façade du bâtiment ancré en a. */
+  faceOf(a: number): number {
+    if (this.bFace[a]) return this.bFace[a];
+    const [gw, gh] = this.lotDims(a);
+    const i = a % this.size, j = Math.floor(a / this.size);
+    return gw * gh > 1 ? this.rectFacing(i, j, gw, gh) : this.facing(i, j);
+  }
+
+  /**
+   * Style architectural du quartier (0 classique, 1 moderne, 2 méditerranéen, 3 montagnard) :
+   * dépend de la région (type de carte) et varie par grands quartiers.
+   */
+  styleAt(i: number, j: number): number {
+    const t = this.mapType;
+    const regional = t === 'desert' || t === 'coast' || t === 'island' || t === 'archipelago' ? 2 : t === 'mountain' || t === 'forest' || t === 'valley' ? 3 : 0;
+    const v = fbm(i / 34 + 300, j / 34 + 300, this.seed + 77, 3);
+    if (v > 0.6) return 1; // quartiers modernes
+    if (v < 0.36 && regional === 0) return 3 - (this.seed % 2) * 1; // touche locale
+    return regional;
+  }
+
+  /** Style effectif d'un bâtiment (imposé ou celui du quartier). */
+  styleOf(a: number): number {
+    if (this.bStyle[a]) return this.bStyle[a] - 1;
+    return this.styleAt(a % this.size, Math.floor(a / this.size));
   }
 
   /** Direction de la route la plus proche (bit N/E/S/W), pour orienter la façade. */

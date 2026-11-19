@@ -13,7 +13,8 @@ import { fmt, ROAD_MODE_NAMES, type HoverInfo, type RoadMode, type ToolId, type 
 import type { CityStats, Simulation } from '../sim/Simulation';
 import { TrafficView } from '../render/TrafficView';
 import { VIEW_LABELS, type DataView, type ViewMode } from '../render/DataView';
-import { BuildState, LEVEL_NAMES, Zone, ZONE_INFO, ZONES, type ZoneType } from '../sim/zones';
+import { ALL_ZONES, BuildState, hasHomes, hasJobs, KIND_COLORS, KIND_SHORT, LEVEL_NAMES, STATE_NAMES, STYLE_NAMES, Zone, ZONE_INFO, ZONES, type ZoneId, type ZoneType } from '../sim/zones';
+import { BuildingSheet } from './BuildingSheet';
 import {
   COVERAGE_NAMES, COVERAGES, SERVICE_INFO, SERVICES, UTILITIES, UTILITY_COLORS, UTILITY_NAMES, UTILITY_SHORT, Utility, type Service,
 } from '../sim/services';
@@ -32,6 +33,7 @@ const ICONS: Record<string, string> = {
   stats: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   advisor: '<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.5 1 2.5h6c0-1 .3-1.8 1-2.5A6 6 0 0 0 12 3z"/>',
   bell: '<path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
+  library: '<path d="M4 21V9l5-4v16M9 21V3l6 4v14M15 21v-9l5 3v6"/><path d="M2 21h20"/>',
   undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
   redo: '<path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>',
   terrain: '<path d="M2 20l6-9 4 5 3-4 7 8z"/><circle cx="17" cy="6" r="2"/>',
@@ -48,11 +50,12 @@ const icon = (name: string) =>
 interface ToolDef { id: ToolId; label: string; key?: string; color?: string; zone?: ZoneType; sub?: string; unlock?: number; desc?: string }
 type Group = { id: string; label: string; icon: string; key?: string; tools: ToolDef[] };
 
+const ZONE_KEYS: Partial<Record<ZoneId, string>> = { [Zone.Residential]: '3', [Zone.Commercial]: '4', [Zone.Industrial]: '5', [Zone.Office]: '6' };
 const ZONE_TOOLS: ToolDef[] = [
-  { id: 'zoneR', label: 'Résidentiel', key: '3', zone: Zone.Residential, color: ZONE_INFO[Zone.Residential].color, sub: 'Logements' },
-  { id: 'zoneC', label: 'Commercial', key: '4', zone: Zone.Commercial, color: ZONE_INFO[Zone.Commercial].color, sub: 'Boutiques, emplois' },
-  { id: 'zoneI', label: 'Industriel', key: '5', zone: Zone.Industrial, color: ZONE_INFO[Zone.Industrial].color, sub: 'Usines, emplois' },
-  { id: 'zoneO', label: 'Bureaux', key: '6', zone: Zone.Office, color: ZONE_INFO[Zone.Office].color, sub: 'Emplois qualifiés' },
+  ...ALL_ZONES.map((z): ToolDef => ({
+    id: `zone${z}`, label: ZONE_INFO[z].name, key: ZONE_KEYS[z], zone: z as unknown as ZoneType, color: ZONE_INFO[z].color,
+    sub: ZONE_INFO[z].buildings, desc: `${ZONE_INFO[z].buildings}. ${ZONE_INFO[z].rules}`,
+  })),
   { id: 'dezone', label: 'Dézoner', key: '7', color: '#fb923c', sub: 'Retire la zone' },
 ];
 const svcTools = (cat: 'utilities' | 'services' | 'transport'): ToolDef[] =>
@@ -79,6 +82,10 @@ const GROUPS: Group[] = [
     { id: 'lights', label: 'Feux tricolores', color: '#ef4444', sub: 'Clic sur un carrefour', desc: 'Ajoute ou retire des feux. Les carrefours d\'avenues en ont automatiquement.' },
   ] },
   { id: 'zones', label: 'Zones', icon: 'zone', tools: ZONE_TOOLS },
+  { id: 'library', label: 'Bâtiments', icon: 'library', key: '9', tools: [
+    { id: 'place', label: 'Placer', color: '#38bdf8', sub: 'Modèle de la bibliothèque' },
+    { id: 'move', label: 'Déplacer', color: '#a78bfa', sub: 'Saisir puis reposer (R pivote)', desc: 'Cliquez un bâtiment ou un équipement, puis l\'endroit voulu. Coût : 30 % de la construction.' },
+  ] },
   { id: 'utilities', label: 'Réseaux', icon: 'utilities', tools: svcTools('utilities') },
   { id: 'services', label: 'Services', icon: 'services', tools: svcTools('services') },
   { id: 'transport', label: 'Transports', icon: 'transport', tools: TRANSPORT_TOOLS },
@@ -93,7 +100,7 @@ const GROUPS: Group[] = [
 ];
 
 const KEYED: ToolDef[] = [
-  { id: 'select', label: '', key: '1' }, { id: 'road', label: '', key: '2' }, ...ZONE_TOOLS, { id: 'bulldoze', label: '', key: '8' },
+  { id: 'select', label: '', key: '1' }, { id: 'road', label: '', key: '2' }, ...ZONE_TOOLS, { id: 'bulldoze', label: '', key: '8' }, { id: 'place', label: '', key: '9' },
 ];
 
 /** Interface en surimpression (HTML) : barre d'état, outils, infos de case, notifications. */
@@ -138,7 +145,7 @@ export class Hud {
         <div class="stat" title="Satisfaction moyenne des habitants"><span class="label">Bonheur</span><span class="value" id="happy">–</span></div>
         <div class="stat" title="Vitesse moyenne des véhicules par rapport à leur vitesse normale"><span class="label">Trafic</span><span class="value" id="flow">–</span></div>
         <div class="demand" id="demand" title="Demande de la ville par type de zone">
-          ${ZONES.map((z) => `<div class="bar" data-zone="${z}" style="--c:${ZONE_INFO[z].color}"><div class="track"><i></i></div><span>${ZONE_INFO[z].short}</span></div>`).join('')}
+          ${ZONES.map((z) => `<div class="bar" data-zone="${z}" style="--c:${KIND_COLORS[z]}"><div class="track"><i></i></div><span>${KIND_SHORT[z]}</span></div>`).join('')}
         </div>
         <div class="spacer"></div>
         <div class="milestone" id="milestone" title=""><span class="ms-name"></span><div class="ms-bar"><i></i></div></div>
@@ -191,6 +198,7 @@ export class Hud {
     this.el('#flyout').addEventListener('click', (e) => {
       const b = (e.target as HTMLElement).closest('button');
       if (b?.dataset.roadmode) { tools.setRoadMode(b.dataset.roadmode as RoadMode); this.renderFlyout(); return; }
+      if (b?.dataset.lib) { this.libraryClick(b.dataset.lib, b.dataset.v!); return; }
       if (b?.dataset.tool) tools.setTool(b.dataset.tool as ToolId);
     });
     this.el('#speeds').addEventListener('click', (e) => {
@@ -279,6 +287,8 @@ export class Hud {
     sim.events.on('speedChanged', () => this.updateSpeed());
     sim.events.on('statsChanged', (st) => this.updateStats(st));
     sim.events.on('notify', (n) => { this.toast(n.text, n.kind ?? 'info', n.tile); this.log(n.text, n.kind ?? 'info', n.tile); });
+    const sheet = new BuildingSheet(root, sim, tools);
+    tools.onSelect = (idx) => sheet.show(idx);
     tools.onToolChange = (t) => this.updateTool(t);
     tools.onHover = (h) => this.updateInfo(h);
     tools.onTooltip = (t) => this.updateTooltip(t);
@@ -304,6 +314,7 @@ export class Hud {
     });
     if (!g) { fly.hidden = true; return; }
     fly.hidden = false;
+    if (g.id === 'library') { fly.innerHTML = this.libraryHtml(); return; }
     const modes = g.id === 'roads' ? `<div class="road-modes" role="group" aria-label="Tracé">${(Object.keys(ROAD_MODE_NAMES) as RoadMode[]).map((m) =>
       `<button data-roadmode="${m}" class="${this.tools.roadMode === m ? 'active' : ''}" title="Touche C pour changer">${ROAD_MODE_NAMES[m]}</button>`).join('')}</div>` : '';
     fly.innerHTML = `<div class="fly-title">${g.label}${modes}</div>` + g.tools.map((t) => {
@@ -314,6 +325,52 @@ export class Hud {
         <i></i><span class="name">${t.label}${t.key ? ` <kbd>${t.key}</kbd>` : ''}</span>
         <span class="sub">${locked ? `Débloqué à ${unlockAt.toLocaleString('fr-FR')} hab.` : t.sub ?? ''}</span></button>`;
     }).join('');
+  }
+
+  /** Bibliothèque de bâtiments : type, niveau, taille de parcelle, style, puis placement (§6). */
+  private libraryHtml(): string {
+    const sp = this.tools.placeSpec;
+    const info = ZONE_INFO[sp.zone];
+    const chip = (key: string, v: string | number, label: string, active: boolean, extra = '', title = '') =>
+      `<button data-lib="${key}" data-v="${v}" class="chip ${active ? 'active' : ''} ${extra}" title="${title}">${label}</button>`;
+    const zones = ALL_ZONES.map((z) => {
+      const locked = !this.sim.isUnlocked(z);
+      return chip('zone', z, `<i style="background:${ZONE_INFO[z].color}"></i>${ZONE_INFO[z].short}`, z === sp.zone, locked ? 'locked' : '',
+        `${ZONE_INFO[z].name}${locked ? ` (débloqué à ${ZONE_INFO[z].unlockPop.toLocaleString('fr-FR')} hab.)` : ''}`);
+    }).join('');
+    const sizes = info.lots.map(([f, d]) => chip('size', `${f}x${d}`, `${f}×${d}`, sp.front === f && sp.depth === d, '', `${f} case(s) de façade × ${d} de profondeur`)).join('');
+    const levels = [1, 2, 3].map((l) => chip('level', l, LEVEL_NAMES[l], sp.level === l)).join('');
+    const styles = ['Auto', ...STYLE_NAMES].map((n, k) => chip('style', k, n, sp.style === k, '', k ? `Style ${n.toLowerCase()}` : 'Style du quartier')).join('');
+    const cost = this.sim.constructionCost(sp.zone, sp.level, sp.front * sp.depth);
+    const cap = info.homes[sp.level - 1] ? `${info.homes[sp.level - 1] * sp.front * sp.depth} habitants` : '';
+    const jobs = info.jobs[sp.level - 1] ? `${info.jobs[sp.level - 1] * sp.front * sp.depth} emplois` : '';
+    return `<div class="fly-title">Bibliothèque de bâtiments</div>
+      <div class="lib">
+        <div class="lib-row"><span>Type</span><div>${zones}</div></div>
+        <div class="lib-row"><span>Niveau</span><div>${levels}</div></div>
+        <div class="lib-row"><span>Taille</span><div>${sizes}</div></div>
+        <div class="lib-row"><span>Style</span><div>${styles}</div></div>
+        <div class="lib-desc"><b>${info.name}</b> · ${info.buildings} · ${[cap, jobs].filter(Boolean).join(' + ')}<br><span>${info.rules}</span></div>
+        <div class="lib-actions">
+          <button data-lib="place" data-v="1" class="primary ${this.tools.tool === 'place' ? 'active' : ''}">Placer · ${fmt(cost)}</button>
+          <button data-lib="move" data-v="1" class="${this.tools.tool === 'move' ? 'active' : ''}">Déplacer un bâtiment</button>
+          <span class="lib-hint"><kbd>R</kbd> pivoter · <kbd>Échap</kbd> annuler · <kbd>Suppr</kbd> démolir la sélection</span>
+        </div>
+      </div>`;
+  }
+
+  private libraryClick(key: string, v: string): void {
+    const sp = this.tools.placeSpec;
+    if (key === 'zone') {
+      sp.zone = Number(v) as ZoneId;
+      const lots = ZONE_INFO[sp.zone].lots;
+      if (!lots.some(([f, d]) => f === sp.front && d === sp.depth)) [sp.front, sp.depth] = lots[0];
+    } else if (key === 'level') sp.level = Number(v);
+    else if (key === 'size') [sp.front, sp.depth] = v.split('x').map(Number);
+    else if (key === 'style') sp.style = Number(v);
+    else if (key === 'move') { this.tools.setTool('move'); return; }
+    if (key === 'place' || this.tools.tool !== 'place') this.tools.setTool('place');
+    else { this.tools.refresh(); this.renderFlyout(); }
   }
 
   private updateMoney(): void {
@@ -426,7 +483,7 @@ export class Hud {
     const w = this.sim.world, ut = this.sim.utilities;
     const idx = w.index(h.i, h.j);
     const [lo, hi] = w.tileMinMax(h.i, h.j);
-    const zone = w.zones[idx] as ZoneType | 0;
+    const zone = w.zones[idx] as ZoneId | 0;
     const state = w.bState[idx];
     const svc = w.service[idx] as Service;
     let kind = w.isRoad(h.i, h.j) ? 'Route' : w.terrainLabel(h.i, h.j);
@@ -462,14 +519,17 @@ export class Hud {
     if (zone) {
       const info = ZONE_INFO[zone];
       kind = `<span class="dot" style="background:${info.color}"></span>${info.name}`;
-      if (state === BuildState.Construction) extra = `<dt>État</dt><dd>Chantier (${w.bTimer[idx]} j)</dd>`;
+      const [gw, gh] = w.lotDims(w.anchorOf(idx));
+      if (state && gw * gh > 1) extra += `<dt>Parcelle</dt><dd>${gw} × ${gh} cases</dd>`;
+      if (state === BuildState.Abandoned) extra += `<dt>État</dt><dd class="bad">${STATE_NAMES[state]}</dd>`;
+      else if (state === BuildState.Construction) extra += `<dt>État</dt><dd>Chantier (${w.bTimer[idx]} j)</dd>`;
       else if (state === BuildState.Built) {
         const cap = this.sim.capacity(idx);
         const okU = (u: Utility) => ut.hasUtility(idx, u);
         const icons = UTILITIES.map((u) => `<span class="u ${okU(u) ? 'ok' : 'ko'}" title="${UTILITY_NAMES[u]}" style="--c:${UTILITY_COLORS[u]}">${UTILITY_SHORT[u]}</span>`).join('');
         const soc = this.sim.society, cz = soc.citizens;
-        let people: string;
-        if (zone === Zone.Residential) {
+        let people = '';
+        if (hasHomes(zone)) {
           // Habitants réels du bâtiment
           const hs = cz.householdsAt.get(idx) ?? [];
           const list: string[] = [];
@@ -484,10 +544,11 @@ export class Hud {
             <dt>Loyer</dt><dd>${fmt(soc.rent(idx))} / mois</dd>
             ${hs.length ? `<dt>Revenu moyen</dt><dd>${fmt(income)} / foyer</dd>` : ''}
             ${list.length ? `<dt class="wide">Habitants</dt>${list.map((l) => `<dd class="wide person">${l}</dd>`).join('')}${cz.residents[idx] > list.length ? `<dd class="wide person">… et ${cz.residents[idx] - list.length} autre(s)</dd>` : ''}` : ''}`;
-        } else {
+        }
+        if (hasJobs(zone)) {
           const by = [0, 1, 2].map((l) => `${cz.employeesBy[l][idx]}/${soc.slotsOf(idx, l)}`).join(' · ');
           const status = soc.badMonths[idx] >= 3 ? '<span class="bad">en difficulté, licenciements</span>' : soc.badMonths[idx] ? 'fragile' : soc.goodMonths[idx] > 2 ? 'prospère' : 'stable';
-          people = `<dt>Entreprise</dt><dd>${companyName(idx, zone)}</dd>
+          people += `<dt>Entreprise</dt><dd>${companyName(idx, zone)}</dd>
             <dt>Employés</dt><dd title="Peu qualifiés · qualifiés · très qualifiés">${by}</dd>
             <dt>Recettes</dt><dd>${fmt(soc.revenue[idx])} / mois</dd>
             <dt>Coûts</dt><dd>${fmt(soc.costs[idx])} / mois</dd>
@@ -495,18 +556,19 @@ export class Hud {
             <dt>Situation</dt><dd>${status}</dd>`;
           void SALARY;
         }
-        extra = `${people}<dt>Bâtiment</dt><dd>${LEVEL_NAMES[w.bLevel[idx]]}</dd>
+        extra += `${people}<dt>Bâtiment</dt><dd>${LEVEL_NAMES[w.bLevel[idx]]} · ${STYLE_NAMES[w.styleOf(w.anchorOf(idx))]}</dd>
           <dt>Pollution</dt><dd>air ${Math.round(ut.air[idx] * 100)} % · bruit ${Math.round(ut.noise[idx] * 100)} %</dd>
-          <dt>${zone === Zone.Residential ? 'Habitants' : 'Postes'}</dt><dd>${zone === Zone.Residential ? this.sim.society.citizens.residents[idx] : this.sim.society.citizens.employees[idx]} / ${cap}</dd>
+          <dt>Occupants</dt><dd>${cz.residents[idx] + cz.employees[idx]} / ${cap}</dd>
           <dt>Réseaux</dt><dd>${icons}</dd>
           <dt>Bonheur</dt><dd>${Math.round(ut.happiness[idx] * 100)} %</dd>
           ${ut.fire[idx] ? '<dt>État</dt><dd class="bad">En feu !</dd>' : ''}
           ${ut.problemDays[idx] ? `<dt>Abandon dans</dt><dd class="bad">${45 - ut.problemDays[idx]} j</dd>` : ''}`;
       } else {
         const miss = ut.missing(idx);
-        extra = `<dt>État</dt><dd>${w.roadDist[idx] > 3 ? 'Sans accès routier' : miss.length ? `Manque ${miss.map((u) => UTILITY_NAMES[u].toLowerCase()).join(', ')}` : 'Terrain libre'}</dd>`;
+        extra += `<dt>État</dt><dd>${w.roadDist[idx] > 3 ? 'Sans accès routier' : miss.length ? `Manque ${miss.map((u) => UTILITY_NAMES[u].toLowerCase()).join(', ')}` : 'Terrain libre'}</dd>`;
       }
       extra += `<dt>Valeur foncière</dt><dd>${Math.round(this.sim.landValue(idx) * 100)} %</dd>`;
+      if (state) extra += '<dt class="wide" style="color:var(--accent)">Cliquez pour la fiche complète</dt>';
     }
     box.hidden = false;
     box.innerHTML = `

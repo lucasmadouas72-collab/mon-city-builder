@@ -3,7 +3,9 @@ import type { SceneRenderer } from '../render/SceneRenderer';
 import { OverlayColor } from '../render/Overlay';
 import type { Simulation } from '../sim/Simulation';
 import type { CameraController } from './CameraController';
-import { Zone, ZONE_INFO, type ZoneType } from '../sim/zones';
+import { ALL_ZONES, Zone, ZONE_INFO, zoneInfo } from '../sim/zones';
+import type { BuildingSpec, PlaceEstimate } from '../sim/Simulation';
+import { E, N, S, W } from '../sim/World';
 import { SERVICE_INFO, Service as Svc, type Service } from '../sim/services';
 import { BUS_STOP_COST } from '../sim/economy';
 import type { UndoStack } from '../sim/Undo';
@@ -18,7 +20,7 @@ export const ROAD_TOOL: Partial<Record<string, RoadType>> = {
   road: RoadType.Street, avenue: RoadType.Avenue, highway: RoadType.Highway, pedestrian: RoadType.Pedestrian,
 };
 
-export type ToolId = 'select' | 'road' | 'avenue' | 'highway' | 'pedestrian' | 'oneway' | 'lights' | 'zoneR' | 'zoneC' | 'zoneI' | 'zoneO' | 'dezone' | 'bulldoze' | 'busstop' | 'busline' | 'metroline' | 'tUp' | 'tDown' | 'tSmooth' | 'tFlat' | 'tTrees' | `svc${number}`;
+export type ToolId = 'select' | 'road' | 'avenue' | 'highway' | 'pedestrian' | 'oneway' | 'lights' | `zone${number}` | 'place' | 'move' | 'dezone' | 'bulldoze' | 'busstop' | 'busline' | 'metroline' | 'tUp' | 'tDown' | 'tSmooth' | 'tFlat' | 'tTrees' | `svc${number}`;
 
 const TERRAIN_MODE = { tUp: 'up', tDown: 'down', tSmooth: 'smooth', tFlat: 'flat', tTrees: 'trees' } as const;
 
@@ -26,9 +28,8 @@ const TERRAIN_MODE = { tUp: 'up', tDown: 'down', tSmooth: 'smooth', tFlat: 'flat
 export const toolService = (t: ToolId): Service | null => (t.startsWith('svc') ? (Number(t.slice(3)) as Service) : null);
 
 /** Zone appliquée par chaque outil de zonage. */
-export const TOOL_ZONE: Partial<Record<ToolId, Zone>> = {
-  zoneR: Zone.Residential, zoneC: Zone.Commercial, zoneI: Zone.Industrial, zoneO: Zone.Office, dezone: Zone.None,
-};
+export const TOOL_ZONE: Partial<Record<ToolId, Zone>> = { dezone: Zone.None };
+for (const z of ALL_ZONES) TOOL_ZONE[`zone${z}`] = z;
 const svcColors = new Map<string, THREE.Color>();
 const serviceColor = (hex: string) => {
   let c = svcColors.get(hex);
@@ -38,7 +39,7 @@ const serviceColor = (hex: string) => {
 const zoneColors = new Map<Zone, THREE.Color>();
 const zoneColor = (z: Zone) => {
   let c = zoneColors.get(z);
-  if (!c) zoneColors.set(z, (c = z === Zone.None ? OverlayColor.demolish.clone() : new THREE.Color(ZONE_INFO[z as ZoneType].color)));
+  if (!c) zoneColors.set(z, (c = z === Zone.None ? OverlayColor.demolish.clone() : new THREE.Color(zoneInfo(z)?.color ?? '#ffffff')));
   return c;
 };
 
@@ -74,6 +75,55 @@ export class ToolManager {
   /** Points déjà posés pour une route courbe (départ, puis point de contrôle). */
   private curvePts: Pt[] = [];
   private ghost: THREE.Line;
+  /** Modèle choisi dans la bibliothèque (outil Placer). */
+  placeSpec: BuildingSpec = { zone: Zone.ResidentialLow, level: 1, front: 1, depth: 1, style: 0 };
+  /** Orientation imposée de l'aperçu (0 = automatique, vers la route). */
+  placeFace = 0;
+  /** Bâtiment en cours de déplacement (outil Déplacer). */
+  moveFrom: number | null = null;
+  /** Bâtiment sélectionné (fiche ouverte). */
+  selected: number | null = null;
+  onSelect?: (idx: number | null) => void;
+  /** Aperçu translucide du bâtiment à poser (fourni par le rendu). */
+  onPreview?: (spec: BuildingSpec | null, est: PlaceEstimate | null) => void;
+  private lastPlace: PlaceEstimate | null = null;
+  private downAt = { x: 0, y: 0 };
+
+  /** Fait pivoter l'aperçu d'un quart de tour (touche R). */
+  rotate(): void {
+    const order = [S, W, N, E];
+    const cur = this.placeFace || this.lastPlace?.face || S;
+    this.placeFace = order[(order.indexOf(cur) + 1) % 4];
+    this.refresh();
+  }
+
+  /** Sélectionne un bâtiment ou un équipement (fiche). */
+  select(idx: number | null): void {
+    const w = this.sim.world;
+    if (idx !== null && !(w.bState[idx] || w.service[idx])) idx = null;
+    this.selected = idx === null ? null : w.service[idx] ? idx : w.anchorOf(idx);
+    this.onSelect?.(this.selected);
+    this.refresh();
+  }
+
+  /** Démolit le bâtiment sélectionné (touche Suppr). */
+  deleteSelected(): void {
+    if (this.selected === null) return;
+    const w = this.sim.world;
+    const tiles = w.service[this.selected] ? [this.selected] : w.lotTiles(this.selected);
+    this.act(() => this.sim.bulldoze(tiles));
+    this.select(null);
+  }
+
+  /** Commence le déplacement d'un bâtiment. */
+  startMove(idx: number): void {
+    const w = this.sim.world;
+    if (!(w.service[idx] || (w.bState[idx] && w.zones[idx]))) return;
+    this.setTool('move');
+    this.moveFrom = w.service[idx] ? idx : w.anchorOf(idx);
+    this.placeFace = 0;
+    this.refresh();
+  }
 
   setRoadMode(m: RoadMode): void {
     this.roadMode = m;
@@ -183,8 +233,16 @@ export class ToolManager {
     dom.addEventListener('pointerleave', () => { if (!this.dragStart) this.setHover(null); });
     dom.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('keydown', (e) => {
+      if ((e.target as HTMLElement).tagName === 'INPUT') return;
+      if (e.code === 'KeyR' && !e.ctrlKey && !e.metaKey) {
+        if (this.tool === 'place' || (this.tool === 'move' && this.moveFrom !== null)) this.rotate();
+        else if (this.tool === 'select' && this.selected !== null && this.sim.world.bState[this.selected]) { this.act(() => this.sim.rotateBuilding(this.selected!)); }
+      }
+      if ((e.code === 'Delete' || e.code === 'NumpadDecimal') && this.selected !== null) this.deleteSelected();
       if (e.code === 'Escape') {
-        if (this.curvePts.length) { this.curvePts = []; this.refresh(); }
+        if (this.tool === 'move' && this.moveFrom !== null) { this.moveFrom = null; this.refresh(); }
+        else if (this.selected !== null && this.tool === 'select') this.select(null);
+        else if (this.curvePts.length) { this.curvePts = []; this.refresh(); }
         else if (this.dragStart) this.cancelDrag();
         else if (this.draft.length) { this.draft = []; this.refresh(); }
         else this.setTool('select');
@@ -227,6 +285,9 @@ export class ToolManager {
   }
 
   setTool(tool: ToolId): void {
+    if (tool !== 'move') this.moveFrom = null;
+    if (tool !== 'place' && tool !== 'move') this.onPreview?.(null, null);
+    if (tool === 'place') this.placeFace = 0;
     this.draft = [];
     this.curvePts = [];
     this.tool = tool;
@@ -279,6 +340,7 @@ export class ToolManager {
   }
 
   private onDown(e: PointerEvent): void {
+    this.downAt = { x: e.clientX, y: e.clientY };
     if (e.button !== 0 || this.tool === 'select') return;
     const h = this.pick(e);
     if (!h) return;
@@ -305,7 +367,34 @@ export class ToolManager {
       this.stroke = null;
       return;
     }
+    // Clic simple avec l'outil Sélection : ouvre la fiche du bâtiment
+    if (e.button === 0 && this.tool === 'select' && Math.hypot(e.clientX - this.downAt.x, e.clientY - this.downAt.y) < 5 && e.target === this.dom) {
+      const h = this.pick(e);
+      this.select(h ? this.sim.world.index(h.i, h.j) : null);
+      return;
+    }
     if (e.button !== 0 || !this.dragStart) return;
+    if (this.tool === 'place' && this.hover) {
+      const h = this.hover;
+      this.dragStart = null;
+      this.act(() => this.sim.placeBuilding({ ...this.placeSpec }, h.i, h.j, this.placeFace));
+      this.refresh();
+      return;
+    }
+    if (this.tool === 'move' && this.hover) {
+      const h = this.hover, w = this.sim.world;
+      this.dragStart = null;
+      if (this.moveFrom === null) {
+        const k = w.index(h.i, h.j);
+        if (w.service[k] || (w.bState[k] && w.zones[k])) { this.moveFrom = w.service[k] ? k : w.anchorOf(k); this.placeFace = 0; }
+        else this.sim.events.emit('notify', { text: 'Cliquez sur un bâtiment ou un équipement à déplacer', kind: 'warn' });
+      } else {
+        const from = this.moveFrom;
+        if (this.act(() => this.sim.moveBuilding(from, h.i, h.j, this.placeFace))) { this.moveFrom = null; this.select(null); }
+      }
+      this.refresh();
+      return;
+    }
     // Route courbe : 1er clic = départ, 2e = point de contrôle, 3e = arrivée
     if (ROAD_TOOL[this.tool] && this.roadMode === 'curve' && this.hover) {
       const p = this.snapCenter(this.hover.i, this.hover.j);
@@ -371,8 +460,40 @@ export class ToolManager {
     this.tip = null;
     if (!this.lineKind) this.onDraft?.(null, []);
     if (!ROAD_TOOL[this.tool]) this.showGhost(null);
+    if (this.tool !== 'place' && !(this.tool === 'move' && this.moveFrom !== null)) { this.lastPlace = null; this.onPreview?.(null, null); }
+    if (this.tool === 'select' && this.selected !== null) {
+      const w = this.sim.world;
+      const sel = w.service[this.selected] ? [this.selected] : w.lotTiles(this.selected);
+      ov.set([[sel, OverlayColor.hover], ...(tiles ? [[tiles, OverlayColor.hover] as [number[], THREE.Color]] : [])]);
+      this.updateTooltipPosition();
+      return;
+    }
     if (!tiles) {
       ov.clear();
+    } else if (this.tool === 'place' || this.tool === 'move') {
+      const w = this.sim.world, h = this.hover!;
+      if (this.tool === 'move' && this.moveFrom === null) {
+        const k = w.index(h.i, h.j);
+        const ok = w.service[k] || (w.bState[k] && w.zones[k]);
+        ov.set([[ok ? (w.service[k] ? [k] : w.lotTiles(k)) : [k], ok ? OverlayColor.hover : OverlayColor.invalid]]);
+        this.tip = { text: ok ? 'Cliquez pour saisir ce bâtiment' : 'Choisissez un bâtiment ou un équipement à déplacer', kind: ok ? 'info' : 'bad' };
+      } else {
+        const est = this.tool === 'place'
+          ? this.sim.estimatePlace(this.placeSpec, h.i, h.j, this.placeFace)
+          : this.sim.estimateMove(this.moveFrom!, h.i, h.j, this.placeFace);
+        if (est) {
+          this.lastPlace = est;
+          const spec = this.tool === 'place' ? this.placeSpec : this.sim.specOf(this.moveFrom!);
+          this.onPreview?.(spec, est);
+          const from = this.tool === 'move' && this.moveFrom !== null ? (w.service[this.moveFrom] ? [this.moveFrom] : w.lotTiles(this.moveFrom)) : [];
+          ov.set([[from, OverlayColor.hover], [est.tiles.filter((t) => !est.invalid.includes(t)), est.ok ? OverlayColor.valid : OverlayColor.invalid], [est.invalid, OverlayColor.invalid]]);
+          const name = this.tool === 'place' ? ZONE_INFO[this.placeSpec.zone].name : 'Déplacer';
+          const warn = est.warnings.length ? ` · ⚠ ${est.warnings[0]}` : '';
+          this.tip = est.ok
+            ? { text: `${name} · ${est.rect[2]}×${est.rect[3]} · ${fmt(est.cost)} · R pivoter${warn}`, kind: est.warnings.length ? 'info' : 'ok' }
+            : { text: est.reasons.join(' · '), kind: 'bad' };
+        }
+      }
     } else if (this.tool === 'oneway') {
       const roads = tiles.filter((t) => this.sim.world.tiles[t] === 1);
       ov.set([[roads, OverlayColor.valid], [tiles.filter((t) => this.sim.world.tiles[t] !== 1), OverlayColor.invalid]]);
@@ -477,7 +598,7 @@ export class ToolManager {
       const est = this.sim.estimateZone(tiles, zone);
       ov.set([[est.valid, zoneColor(zone)], [est.invalid, OverlayColor.invalid]]);
       if (est.valid.length) {
-        const label = zone === Zone.None ? 'Dézoner' : ZONE_INFO[zone as ZoneType].name;
+        const label = zone === Zone.None ? 'Dézoner' : zoneInfo(zone)?.name ?? '';
         this.tip = { text: `${label} · ${est.valid.length} case(s)`, kind: 'ok' };
       } else if (est.reason) {
         this.tip = { text: est.reason, kind: 'bad' };

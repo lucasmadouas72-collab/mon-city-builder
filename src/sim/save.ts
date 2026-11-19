@@ -1,13 +1,14 @@
 import type { GameConfig } from '../game/config';
 import type { Simulation } from './Simulation';
 import { World } from './World';
+import { hasJobs } from './zones';
 
 /** Sauvegarde complète d'une partie, au format JSON (tableaux encodés en base64). */
 
 const VERSION = 1;
-const ARRAYS = ['heights', 'tiles', 'trees', 'zones', 'bState', 'bLevel', 'bVariant', 'bTimer', 'service', 'busStop', 'roadType', 'oneway', 'lights', 'links', 'bDamage', 'rubble', 'roadDamage', 'soilPol'] as const;
+const ARRAYS = ['heights', 'tiles', 'trees', 'zones', 'bState', 'bLevel', 'bVariant', 'bTimer', 'service', 'busStop', 'roadType', 'oneway', 'lights', 'links', 'bDamage', 'rubble', 'roadDamage', 'soilPol', 'lotRoot', 'lotSize', 'bFace', 'bStyle', 'bId', 'bManual'] as const;
 /** Tableaux ajoutés après la première version (absents des anciennes sauvegardes). */
-const OPTIONAL = new Set(['roadType', 'oneway', 'lights', 'links', 'bDamage', 'rubble', 'roadDamage', 'soilPol']);
+const OPTIONAL = new Set(['roadType', 'oneway', 'lights', 'links', 'bDamage', 'rubble', 'roadDamage', 'soilPol', 'lotRoot', 'lotSize', 'bFace', 'bStyle', 'bId', 'bManual']);
 type ArrayKey = (typeof ARRAYS)[number];
 
 function toB64(arr: ArrayBufferView): string {
@@ -55,6 +56,7 @@ export function serialize(sim: Simulation, config: GameConfig, camera?: CameraSt
       demo: { shares: sim.demo.shares, education: sim.demo.education },
       lines: sim.transit.lines.map((l) => ({ kind: l.kind, stops: l.stops, color: l.color, name: l.name })),
       citizens: sim.society.citizens.serialize(),
+      nextBuildingId: sim.nextBuildingId,
     },
     camera,
   };
@@ -86,13 +88,14 @@ export function applySave(sim: Simulation, file: SaveFile): void {
   sim.maxPop = s.maxPop ?? 0;
   sim.milestone = s.milestone ?? 0;
   sim.history = s.history ?? [];
+  sim.nextBuildingId = s.nextBuildingId ?? 1;
   if (s.env) { sim.env.hour = s.env.hour; sim.env.weather = s.env.weather; }
   if (s.demo) { sim.demo.shares = s.demo.shares; sim.demo.education = s.demo.education; }
   sim.transit.budget = (sim.budgets.transport ?? 100) / 100;
   sim.afterLoad();
   // Habitants : restaurés, ou créés pour remplir les logements des anciennes sauvegardes
   const w = sim.world;
-  const isJob = (t: number) => w.bState[t] === 2 && w.zones[t] >= 2;
+  const isJob = (t: number) => w.bState[t] === 2 && hasJobs(w.zones[t]);
   if (s.citizens?.c) sim.society.citizens.restore(s.citizens, isJob);
   else sim.society.bootstrap();
   sim.society.refreshMarkets();

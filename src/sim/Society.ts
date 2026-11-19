@@ -1,6 +1,6 @@
 import { Citizens, JOB_MIX, SALARY, Status, type SocietyContext } from './Citizens';
 import type { Simulation } from './Simulation';
-import { BuildState, Zone } from './zones';
+import { BuildState, hasHomes, jobKind, Zone } from './zones';
 import { Coverage } from './services';
 
 /**
@@ -49,6 +49,16 @@ export class Society {
     businesses: 0, struggling: 0, closedThisMonth: 0, closedTotal: 0, spending: 0, goodsDemand: 0, goodsProduced: 0,
     imports: 0, exports: 0, openJobs: [0, 0, 0], slots: [0, 0, 0], avgMargin: {}, underused: 0,
   };
+  /** Bonus de productivité industrielle apporté par la recherche. */
+  innovation = 0;
+  /** Part des flux de marchandises pris en charge par la logistique. */
+  logisticsShare = 0;
+
+  /** Production mensuelle d'un employé (industrie ou agriculture), avec le bonus de la recherche. */
+  productivity(zone: number, level: number): number {
+    return PRODUCTIVITY[level] * (zone === Zone.Agriculture ? 0.75 : 1) * (1 + this.innovation);
+  }
+
   /** Indice du coût de la vie (1 = normal). */
   costOfLiving = 1;
   vacancy = 0;
@@ -76,13 +86,13 @@ export class Society {
     const w = this.sim.world;
     const mix = JOB_MIX[w.zones[tile]];
     if (!mix || w.bState[tile] !== BuildState.Built) return 0;
-    return Math.round(this.sim.capacity(tile) * mix[level]);
+    return Math.round(this.sim.jobCapacity(tile) * mix[level]);
   }
 
   homesOf(tile: number): number {
     const w = this.sim.world;
-    if (w.zones[tile] !== Zone.Residential || w.bState[tile] !== BuildState.Built) return 0;
-    return this.citizens.homes(this.sim.capacity(tile));
+    if (!hasHomes(w.zones[tile]) || w.bState[tile] !== BuildState.Built) return 0;
+    return this.citizens.homes(this.sim.homeCapacity(tile));
   }
 
   /** Listes des emplois vacants et des logements libres (une fois par jour). */
@@ -95,12 +105,13 @@ export class Society {
     for (let k = 0; k < w.bState.length; k++) {
       if (w.bState[k] !== BuildState.Built) continue;
       const z = w.zones[k];
-      if (z === Zone.Residential) {
+      if (hasHomes(z)) {
         const hm = this.homesOf(k);
         homes += hm;
         const f = hm - c.homesTaken[k];
         if (f > 0 && !w.flooded[k]) { free += f; this.vacant.push(k); }
-      } else if (JOB_MIX[z]) {
+      }
+      if (JOB_MIX[z]) {
         for (let l = 0; l < 3; l++) {
           const s = this.slotsOf(k, l);
           slots[l] += s;
@@ -185,7 +196,7 @@ export class Society {
       rent: (t) => this.rent(t),
       wageFactor: (t) => (this.badMonths[t] > 1 ? 0.95 : this.goodMonths[t] > 2 ? 1.05 : 1),
       distance: (a, b) => this.dist(a, b),
-      capacity: (t) => sim.capacity(t),
+      capacity: (t) => sim.homeCapacity(t),
     };
   }
 
@@ -225,18 +236,30 @@ export class Society {
     for (let h = 0; h < c.hCount; h++) if (c.hAlive[h]) spending += Math.max(0, c.hIncome[h] - c.hRent[h]) * 0.6;
     // Poids des commerces, production industrielle
     const jobs: number[] = [];
-    let wC = 0, produced = 0;
+    let wC = 0, produced = 0, logistics = 0, researchers = 0, industrialStaff = 0;
+    // Les centres de recherche rendent l'industrie plus productive (jusqu'à +15 %)
+    for (let k = 0; k < w.bState.length; k++) {
+      if (w.bState[k] !== BuildState.Built) continue;
+      if (w.zones[k] === Zone.Research) researchers += c.employeesBy[2][k];
+      if (w.zones[k] === Zone.Industrial) industrialStaff += c.employees[k];
+    }
+    this.innovation = Math.min(0.15, researchers / (industrialStaff + 20) * 0.6);
     for (let k = 0; k < w.bState.length; k++) {
       if (w.bState[k] !== BuildState.Built || !JOB_MIX[w.zones[k]]) continue;
       jobs.push(k);
-      if (w.zones[k] === Zone.Commercial) wC += sim.capacity(k) * (0.7 + this.landValue[k] * 0.6);
-      if (w.zones[k] === Zone.Industrial) for (let l = 0; l < 3; l++) produced += c.employeesBy[l][k] * PRODUCTIVITY[l];
+      const z = w.zones[k];
+      if (jobKind(z) === Zone.Commercial && z !== Zone.Tourism) wC += sim.jobCapacity(k) * (0.7 + this.landValue[k] * 0.6) * (z === Zone.CommercialDense ? 1.15 : 1);
+      if (z === Zone.Industrial || z === Zone.Agriculture) for (let l = 0; l < 3; l++) produced += c.employeesBy[l][k] * this.productivity(z, l);
+      if (z === Zone.Logistics) logistics += c.employees[k];
     }
     const goodsDemand = spending * GOODS_SHARE;
     const local = Math.min(produced, goodsDemand);
     const imports = Math.max(0, goodsDemand - produced);
     const exports = Math.max(0, produced - goodsDemand);
-    this.costOfLiving = 1 + (goodsDemand ? (imports / goodsDemand) * 0.12 : 0);
+    // La logistique prend en charge une partie des importations (moins de surcoût pour les ménages)
+    const handled = Math.min(imports + exports, logistics * 12000);
+    this.logisticsShare = imports + exports ? handled / (imports + exports) : 0;
+    this.costOfLiving = 1 + (goodsDemand ? (imports / goodsDemand) * 0.12 * (1 - this.logisticsShare * 0.6) : 0);
 
     let struggling = 0, closed = 0, underused = 0, businesses = 0;
     const margins: Record<number, [number, number]> = {};
@@ -247,30 +270,40 @@ export class Society {
       let salaries = 0, rev = 0, goods = 0;
       for (let l = 0; l < 3; l++) salaries += c.employeesBy[l][k] * SALARY[l];
       const slotsAll = this.slotsOf(k, 0) + this.slotsOf(k, 1) + this.slotsOf(k, 2);
-      if (z === Zone.Commercial) {
+      if (z === Zone.Tourism) {
+        // Hôtels : dépenses des visiteurs selon l'attrait de la ville et du quartier
+        const appeal = 0.4 + sim.tourismAppeal + lv * 0.5;
+        rev = c.employees[k] * 2600 * appeal;
+        goods = rev * 0.2;
+      } else if (z === Zone.Logistics) {
+        // Plateformes de fret : rémunérées par le volume de marchandises traité
+        rev = logistics ? c.employees[k] * 2400 * (0.7 + Math.min(1, (imports + exports) / (logistics * 12000 + 1)) * 0.6) : 0;
+        goods = rev * 0.1;
+      } else if (jobKind(z) === Zone.Commercial) {
         // Part des achats des ménages selon la taille et l'attrait du commerce, limitée par son personnel
-        const share = wC ? spending * (sim.capacity(k) * (0.7 + lv * 0.6)) / wC : 0;
+        const share = wC ? spending * (sim.jobCapacity(k) * (0.7 + lv * 0.6) * (z === Zone.CommercialDense ? 1.15 : 1)) / wC : 0;
         rev = Math.min(share, c.employees[k] * SALES_PER_EMPLOYEE);
         this.target[k] = Math.max(1, Math.min(slotsAll, Math.ceil(share / SALES_PER_EMPLOYEE)));
         goods = rev * GOODS_SHARE * (1 + (goodsDemand ? imports / goodsDemand : 0) * 0.15);
-      } else if (z === Zone.Industrial) {
+      } else if (z === Zone.Industrial || z === Zone.Agriculture) {
         let p = 0;
-        for (let l = 0; l < 3; l++) p += c.employeesBy[l][k] * PRODUCTIVITY[l];
+        for (let l = 0; l < 3; l++) p += c.employeesBy[l][k] * this.productivity(z, l);
         rev = produced ? p * (local / produced + (exports / produced) * 0.85) : 0;
-        goods = p * 0.15; // matières premières
+        goods = p * (z === Zone.Agriculture ? 0.08 : 0.15); // matières premières, semences
       } else {
         for (let l = 0; l < 3; l++) rev += c.employeesBy[l][k] * OFFICE_VALUE[l];
-        rev *= 0.85 + lv * 0.3;
+        rev *= (0.85 + lv * 0.3) * (z === Zone.Research ? 1.2 : 1);
       }
-      const rentCost = sim.capacity(k) * 25 * (0.5 + lv);
+      const rentCost = sim.jobCapacity(k) * 25 * (0.5 + lv) * (z === Zone.Agriculture ? 0.3 : 1);
       const pre = rev - salaries - goods - rentCost;
-      const tax = Math.max(0, pre) * (taxes[z as 2 | 3 | 4] / 100) * 0.9;
+      const tax = Math.max(0, pre) * (taxes[jobKind(z) as 2 | 3 | 4] / 100) * 0.9;
       this.revenue[k] = rev;
       this.costs[k] = salaries + goods + rentCost + tax;
       this.preTax[k] = pre;
       this.profit[k] = pre - tax;
       const margin = rev > 0 ? this.profit[k] / rev : c.employees[k] ? -1 : 0;
-      const m = margins[z] ?? (margins[z] = [0, 0]);
+      const mk = jobKind(z);
+      const m = margins[mk] ?? (margins[mk] = [0, 0]);
       m[0] += margin; m[1]++;
       businesses++;
       const slots = this.slotsOf(k, 0) + this.slotsOf(k, 1) + this.slotsOf(k, 2);
@@ -334,8 +367,8 @@ export class Society {
     const key: Record<number, string> = { [Zone.Commercial]: 'commercial', [Zone.Industrial]: 'industrial', [Zone.Office]: 'office' };
     for (let k = 0; k < w.bState.length; k++) {
       if (w.bState[k] !== BuildState.Built) continue;
-      const z = w.zones[k];
-      if (!key[z]) continue;
+      const z = jobKind(w.zones[k]);
+      if (!z || !key[z]) continue;
       out[key[z]] += (Math.max(0, this.preTax[k]) * (rates[z] / 100) * 0.9 * 0.05 + c.employees[k] * 0.4 * (rates[z] / 9)) * mul;
     }
     return out;
@@ -346,7 +379,7 @@ export class Society {
     const w = this.sim.world, c = this.citizens;
     this.refreshMarkets();
     for (let k = 0; k < w.bState.length; k++) {
-      if (w.bState[k] !== BuildState.Built || w.zones[k] !== Zone.Residential) continue;
+      if (w.bState[k] !== BuildState.Built || !hasHomes(w.zones[k])) continue;
       const homes = this.homesOf(k);
       for (let h = 0; h < homes; h++) c.immigrate(k, 0.4);
     }

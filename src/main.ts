@@ -60,8 +60,10 @@ function startGame(config: GameConfig, file?: SaveFile): void {
   disasterView.refreshFlood();
   sim.events.on('shake', ({ strength }) => cam.shake(strength));
   sim.events.on('damageChanged', () => view.buildings.markChanged([]));
+  sim.events.on('buildingsEvolved', ({ tiles }) => view.buildings.flashEvolution(tiles));
   view.scene.add(trafficView.group, dataView.overlay.group, services.group, transitView.group, atmosphere.group, lights.group);
   tools.onDraft = (kind, tiles) => transitView.setDraft(kind, tiles);
+  tools.onPreview = (spec, est) => view.buildings.preview(spec, est);
 
   const hud = new Hud(document.getElementById('hud')!, sim, tools, dataView);
   hud.focus = (x, z) => cam.focus(x, z);

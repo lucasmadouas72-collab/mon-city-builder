@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Simulation } from '../sim/Simulation';
-import { BuildState } from '../sim/zones';
+import { BuildState, hasHomes } from '../sim/zones';
 import { Coverage, SERVICE_INFO, Service, Utility } from '../sim/services';
 import { Overlay } from './Overlay';
 
@@ -196,12 +196,12 @@ export class DataView {
           if (r) add(r === 2 ? '#14b8a6' : '#3b82c4', idx);
         }
       } else if (m === 'rent') {
-        if (built && w.zones[idx] === 1) { const r = this.sim.society.rent(idx); add(r < 450 ? '#22c55e' : r < 600 ? '#a3e635' : r < 750 ? '#facc15' : r < 900 ? '#f97316' : '#ef4444', idx); }
+        if (built && hasHomes(w.zones[idx])) { const r = this.sim.society.rent(idx); add(r < 450 ? '#22c55e' : r < 600 ? '#a3e635' : r < 750 ? '#facc15' : r < 900 ? '#f97316' : '#ef4444', idx); }
       } else if (m === 'occupancy') {
         if (built) {
           const soc = this.sim.society, cz = soc.citizens;
-          const cap = w.zones[idx] === 1 ? soc.homesOf(idx) : soc.slotsOf(idx, 0) + soc.slotsOf(idx, 1) + soc.slotsOf(idx, 2);
-          const used = w.zones[idx] === 1 ? cz.homesTaken[idx] : cz.employees[idx];
+          const cap = soc.homesOf(idx) + soc.slotsOf(idx, 0) + soc.slotsOf(idx, 1) + soc.slotsOf(idx, 2);
+          const used = cz.homesTaken[idx] + cz.employees[idx];
           add(ramp(cap ? used / cap : 0), idx);
         }
       } else if (m === 'crime') {

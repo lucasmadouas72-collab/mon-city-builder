@@ -5,7 +5,7 @@ import { createTerrainMesh, createWater } from './TerrainMesh';
 import { Trees } from './Trees';
 import { Overlay } from './Overlay';
 import { Buildings } from './Buildings';
-import { BuildState, ZONE_INFO, type ZoneType } from '../sim/zones';
+import { BuildState, zoneInfo } from '../sim/zones';
 
 function createSky(): THREE.Mesh {
   const geo = new THREE.SphereGeometry(900, 32, 16);
@@ -125,7 +125,7 @@ export class SceneRenderer {
     }
     this.zoneOverlay.set([...layers].map(([z, tiles]) => {
       let c = this.zoneColors.get(z);
-      if (!c) this.zoneColors.set(z, (c = new THREE.Color(ZONE_INFO[z as ZoneType].color)));
+      if (!c) this.zoneColors.set(z, (c = new THREE.Color(zoneInfo(z)?.color ?? '#ffffff')));
       return [tiles, c] as [number[], THREE.Color];
     }));
   }

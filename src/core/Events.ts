@@ -31,6 +31,7 @@ export interface GameEvents extends Record<string, unknown> {
   shake: { strength: number };
   milestone: { index: number };
   buildingsChanged: { tiles: number[] };
+  buildingsEvolved: { tiles: number[] };
   statsChanged: import('../sim/Simulation').CityStats;
   moneyChanged: number;
   dateChanged: { day: number; month: number; year: number };

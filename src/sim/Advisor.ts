@@ -1,5 +1,5 @@
 import type { Simulation } from './Simulation';
-import { BuildState, Zone } from './zones';
+import { BuildState, Zone, hasHomes } from './zones';
 import { Coverage, SERVICE_INFO, Service, Utility, UTILITY_NAMES } from './services';
 import { BUDGET_NAMES } from './economy';
 import { DISASTER_NAMES } from './Disasters';
@@ -95,7 +95,7 @@ export function diagnose(sim: Simulation): Issue[] {
       id: 'school', severity: r.unschooled > r.students * 0.3 ? 'serious' : 'warning',
       title: `${n(r.unschooled)} élève(s) sans place à l'école`, causes,
       actions: ['Construire une école dans les quartiers concernés.', `Augmenter le budget « ${BUDGET_NAMES.education} » (plus de places, plus grande portée).`],
-      tile: saturated[0]?.[0] ?? firstWithout((k) => w.zones[k] === Zone.Residential && !(ut.coverage[k] & Coverage.Education)), view: 'education',
+      tile: saturated[0]?.[0] ?? firstWithout((k) => hasHomes(w.zones[k]) && !(ut.coverage[k] & Coverage.Education)), view: 'education',
     });
   }
   const busy = [...ut.loads].filter(([s, L]) => w.service[s] === Service.Clinic && L.wait > 3);
@@ -106,7 +106,7 @@ export function diagnose(sim: Simulation): Issue[] {
       causes: [!hasService(Service.Clinic) ? "La ville n'a pas de clinique." : r.patients > r.beds ? `${n(r.patients)} patients pour ${n(r.beds)} places.` : 'Certains quartiers sont trop loin d\'une clinique.',
         ...(us.air > 0.15 ? ["La pollution de l'air rend des habitants malades."] : [])],
       actions: ['Construire une clinique près des quartiers concernés.', `Augmenter le budget « ${BUDGET_NAMES.health} ».`, ...(us.air > 0.15 ? ['Éloigner l\'industrie des logements, planter des arbres.'] : [])],
-      tile: busy[0]?.[0] ?? firstWithout((k) => w.zones[k] === Zone.Residential && !(ut.coverage[k] & Coverage.Health)), view: 'health',
+      tile: busy[0]?.[0] ?? firstWithout((k) => hasHomes(w.zones[k]) && !(ut.coverage[k] & Coverage.Health)), view: 'health',
     });
   }
 
@@ -185,7 +185,7 @@ export function diagnose(sim: Simulation): Issue[] {
   }
 
   // ----- Environnement et bonheur -----
-  const polluted = built.filter((k) => w.zones[k] === Zone.Residential && ut.air[k] > 0.35);
+  const polluted = built.filter((k) => hasHomes(w.zones[k]) && ut.air[k] > 0.35);
   if (polluted.length > 3) {
     out.push({
       id: 'pollution', severity: 'warning', title: `${n(polluted.length)} logements très pollués`,
@@ -277,7 +277,7 @@ export function diagnose(sim: Simulation): Issue[] {
   }
   if (sim.disasters.level !== 'off') {
     const levees = sim.disasters.levees();
-    const exposed = built.filter((k) => w.zones[k] === Zone.Residential && sim.disasters.floodRisk(k, levees) === 1);
+    const exposed = built.filter((k) => hasHomes(w.zones[k]) && sim.disasters.floodRisk(k, levees) === 1);
     if (exposed.length > 8) {
       out.push({
         id: 'flood-risk', severity: 'warning', title: `${exposed.length} logements en zone inondable`,
@@ -300,6 +300,20 @@ export function diagnose(sim: Simulation): Issue[] {
         actions: ['Construire une seconde centrale ou des éoliennes.'], view: 'power',
       });
     }
+  }
+
+  const abandoned: number[] = [];
+  for (let k = 0; k < w.bState.length; k++) if (w.bState[k] === BuildState.Abandoned && w.anchorOf(k) === k) abandoned.push(k);
+  if (abandoned.length) {
+    const ut2 = sim.utilities;
+    const noNet = abandoned.filter((k) => !ut2.hasUtility(k, 0) || !ut2.hasUtility(k, 1)).length;
+    const noRoad = abandoned.filter((k) => w.roadDist[k] > 3).length;
+    out.push({
+      id: 'abandoned', severity: abandoned.length > 5 ? 'serious' : 'warning', title: `${abandoned.length} bâtiment(s) abandonné(s)`,
+      causes: [noNet ? `${noNet} sans électricité ou sans eau.` : '', noRoad ? `${noRoad} sans accès routier.` : '', 'Pas assez de demande pour ce type de zone.'].filter(Boolean),
+      actions: ['Rétablir les réseaux et l’accès : ils seront réhabilités.', 'Sinon, les démolir (moitié prix) avant qu’ils ne s’effondrent.'],
+      tile: abandoned[0],
+    });
   }
 
   if (!out.length) out.push({ id: 'ok', severity: 'good', title: 'Tout fonctionne bien', causes: ['Aucun problème important détecté.'], actions: ['Continuez à développer la ville.'] });

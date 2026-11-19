@@ -21,12 +21,22 @@ import {
 import type { BudgetKey } from './services';
 import { BRIDGE_COST_MUL, DIRS8, ROAD_INFO, RoadType, dirIndex } from './roads';
 import { ABANDON_DAYS, Coverage, SERVICE_INFO, Service, Utility } from './services';
-import { BuildState, Zone, ZONE_DEPTH, ZONE_INFO, type ZoneType } from './zones';
+import {
+  BuildState, hasHomes, hasJobs, jobKind, kindOf, Zone, ZONE_DEPTH, ZONE_INFO, zoneInfo, type LotShape, type ZoneId, type ZoneType,
+} from './zones';
+import { E, N, S, W } from './World';
 
 const DAYS_PER_MONTH = 30;
 /** Surcoût de terrassement d'une case de route trop pentue. */
 const GRADE_COST = 40;
 const MODEL_VARIANTS = 4;
+/** Jours d'abandon avant qu'un bâtiment délabré ne s'effondre. */
+const RUIN_DAYS = 150;
+
+/** Modèle choisi dans la bibliothèque pour un placement manuel. */
+export interface BuildingSpec { zone: ZoneId; level: number; front: number; depth: number; style: number; variant?: number }
+
+export interface PlaceEstimate { ok: boolean; tiles: number[]; invalid: number[]; reasons: string[]; warnings: string[]; cost: number; rect: [number, number, number, number]; face: number }
 
 export interface CostEstimate {
   /** Cases dont la pente sera aplanie automatiquement. */
@@ -170,9 +180,18 @@ export class Simulation {
     return { day: (this.dayCount % DAYS_PER_MONTH) + 1, month: month % 12, year: 1 + Math.floor(month / 12) };
   }
 
-  isUnlocked(zone: ZoneType): boolean {
-    return this.sandbox || this.maxPop >= ZONE_INFO[zone].unlockPop;
+  isUnlocked(zone: number): boolean {
+    return this.sandbox || this.maxPop >= (zoneInfo(zone)?.unlockPop ?? 0);
   }
+
+  /** Prochain identifiant de bâtiment (stable, sauvegardé). */
+  nextBuildingId = 1;
+  /** Demande propre à chaque type de zone (densités, zones spécialisées). */
+  zoneDemand: Record<number, number> = {};
+  /** Attrait touristique de la ville (0 à 1). */
+  tourismAppeal = 0;
+  /** Bâtiments ayant évolué depuis la dernière annonce. */
+  private evolved: number[] = [];
 
   isServiceUnlocked(s: Service): boolean {
     return this.sandbox || this.maxPop >= SERVICE_INFO[s as Exclude<Service, Service.None>].unlockPop;
@@ -307,6 +326,7 @@ export class Simulation {
         if (w.bTimer[idx] === 0) {
           w.bState[idx] = BuildState.Built;
           changed.push(idx);
+          if (w.bLevel[idx] >= 2 && w.anchorOf(idx) === idx) this.evolved.push(idx);
         }
       } else if (w.bState[idx] === BuildState.Built && w.bTimer[idx] < 65535) {
         w.bTimer[idx]++;
@@ -320,8 +340,7 @@ export class Simulation {
       if (w.bState[idx] !== BuildState.Built) continue;
       if (!ut.hasUtility(idx, Utility.Power) || !ut.hasUtility(idx, Utility.Water)) {
         if (++ut.problemDays[idx] >= ABANDON_DAYS) {
-          this.clearBuilding(idx);
-          changed.push(idx);
+          changed.push(...this.abandonBuilding(idx, 'sans électricité ou sans eau'));
           continue;
         }
       } else ut.problemDays[idx] = 0;
@@ -330,8 +349,7 @@ export class Simulation {
         // Le feu progresse jusqu'à l'arrivée des pompiers (véhicules sur la route)
         ut.fire[idx]--;
         if (ut.fire[idx] === 0) {
-          this.clearBuilding(idx);
-          changed.push(idx);
+          changed.push(...this.clearBuilding(idx));
           this.emergency.closeFire(idx, true);
           this.events.emit('notify', { text: covered ? 'Un bâtiment a brûlé : les pompiers sont arrivés trop tard (trafic ou casernes occupées)' : 'Un bâtiment a brûlé : aucune caserne à portée', kind: 'warn', tile: idx });
           this.events.emit('firesChanged', undefined);
@@ -346,39 +364,55 @@ export class Simulation {
 
     const tiles = this.zonedTiles();
     if (tiles.length) {
-      const d = this.stats.demand;
       const samples = Math.min(tiles.length, 6 + Math.floor(tiles.length * 0.02));
       for (let s = 0; s < samples; s++) {
-        const idx = tiles[Math.floor(this.rand() * tiles.length)];
-        const zone = w.zones[idx] as ZoneType;
-        const demand = d[zone];
+        const idx = w.anchorOf(tiles[Math.floor(this.rand() * tiles.length)]);
+        const zone = w.zones[idx] as ZoneId;
+        if (!zone) continue;
+        const demand = this.zoneDemand[zone] ?? 0;
         const access = w.roadDist[idx] <= ZONE_DEPTH;
         const state = w.bState[idx];
 
         if (state === BuildState.Empty) {
           if (w.rubble[idx] || w.flooded[idx]) continue;
-          if (access && demand > 0 && this.isUnlocked(zone) && this.rand() < 0.08 + demand * 0.35) {
+          // Le zonage rend des parcelles disponibles : un bâtiment n'apparaît que si les conditions sont réunies (§5)
+          const score = this.siteScore(idx, zone);
+          if (access && demand > 0 && score > 0 && this.isUnlocked(zone) && this.rand() < (0.08 + demand * 0.35) * score) {
             if (this.utilities.canGrow(idx)) {
-              this.startConstruction(idx, 1);
-              changed.push(idx);
+              const lot = this.findParcel(idx, zone);
+              changed.push(...this.startConstruction(idx, 1, lot));
             } else blockedByUtilities = idx;
           }
         } else if (state === BuildState.Built) {
           if (!access) {
-            // Plus d'accès routier : le bâtiment est abandonné puis rasé
-            this.clearBuilding(idx);
-            changed.push(idx);
-          } else if (demand < -0.55 && this.rand() < 0.04 && this.occupants(idx) === 0) {
-            // Bâtiment vide sans demande : abandonné
-            this.clearBuilding(idx);
-            changed.push(idx);
+            // Plus d'accès routier : le bâtiment est abandonné
+            changed.push(...this.abandonBuilding(idx, 'plus d\'accès routier'));
+          } else if (demand < -0.55 && this.rand() < 0.04 && this.lotOccupants(idx) === 0) {
+            changed.push(...this.abandonBuilding(idx, 'aucune demande'));
           } else if (w.bLevel[idx] < 3 && w.bTimer[idx] > 40 && demand > 0.15 && this.canUpgrade(idx) && this.rand() < 0.12) {
-            this.startConstruction(idx, w.bLevel[idx] + 1);
-            changed.push(idx);
+            changed.push(...this.startConstruction(idx, w.bLevel[idx] + 1));
+          }
+        } else if (state === BuildState.Abandoned) {
+          // Réhabilitation quand les conditions reviennent, sinon effondrement au bout de quelques mois
+          const ut = this.utilities;
+          if (access && demand > 0.1 && ut.hasUtility(idx, Utility.Power) && ut.hasUtility(idx, Utility.Water) && this.rand() < 0.25) {
+            changed.push(...this.startConstruction(idx, Math.max(1, w.bLevel[idx])));
           }
         }
       }
     }
+    // Les bâtiments abandonnés se délabrent puis s'effondrent
+    for (const idx of tiles) {
+      if (w.bState[idx] !== BuildState.Abandoned || w.anchorOf(idx) !== idx) continue;
+      if (w.bTimer[idx] < 65535) w.bTimer[idx]++;
+      if (w.bTimer[idx] > RUIN_DAYS) {
+        const lot = this.clearBuilding(idx);
+        for (const t of lot) w.rubble[t] = 1;
+        changed.push(...lot);
+        this.events.emit('notify', { text: 'Un bâtiment abandonné s\'est effondré : démolissez les ruines ou rétablissez les services', kind: 'warn', tile: idx });
+      }
+    }
+    if (this.evolved.length && this.dayCount % 10 === 0) this.announceEvolutions();
 
     if (blockedByUtilities >= 0 && this.dayCount - this.lastUtilityHint > 40) {
       this.lastUtilityHint = this.dayCount;
@@ -450,7 +484,7 @@ export class Simulation {
       }
     };
     for (let k = 0; k < w.tiles.length; k++) {
-      if (w.bState[k] === BuildState.Built && w.zones[k] === Zone.Industrial) add(k, 0.008 * w.bLevel[k], 2);
+      if (w.bState[k] === BuildState.Built) { const p = zoneInfo(w.zones[k])?.pollution; if (p && (p.air || p.water) > 0.3) add(k, 0.008 * w.bLevel[k] * Math.max(p.air, p.water * 0.5), 2); }
       if (w.service[k] === Service.Landfill) add(k, 0.015, 3);
       if (w.service[k] === Service.PowerPlant) add(k, 0.006, 3);
     }
@@ -498,7 +532,7 @@ export class Simulation {
     for (let k = 0; k < 3; k++) {
       if (this.rand() > medical / 3) continue;
       const idx = tiles[Math.floor(this.rand() * tiles.length)];
-      if (w.bState[idx] === BuildState.Built && w.zones[idx] === Zone.Residential) this.emergency.report('medical', idx, this.dayCount);
+      if (w.bState[idx] === BuildState.Built && hasHomes(w.zones[idx])) this.emergency.report('medical', idx, this.dayCount);
     }
     for (let k = 0; k < 25; k++) {
       const idx = tiles[Math.floor(this.rand() * tiles.length)];
@@ -518,7 +552,7 @@ export class Simulation {
       if (w.bState[idx] !== BuildState.Built) { ut.crime[idx] = 0; continue; }
       const lv = this.landValue(idx);
       let c = 0.1 + unemp * 1.1 + (0.5 - lv) * 0.5 - (ut.coverage[idx] & Coverage.Police ? 0.3 : 0) + (unsolved.get(idx) ?? 0) * 0.1;
-      if (w.zones[idx] === Zone.Commercial) c += 0.05;
+      if (kindOf(w.zones[idx]) === Zone.Commercial) c += 0.05;
       c = clamp(c, 0, 1);
       ut.crime[idx] = c;
       sum += c; count++;
@@ -526,31 +560,82 @@ export class Simulation {
     this.crimeIndex = count ? sum / count : 0;
   }
 
-  private startConstruction(idx: number, level: number): void {
-    const w = this.world;
-    w.bState[idx] = BuildState.Construction;
-    w.bLevel[idx] = level;
-    w.bVariant[idx] = Math.floor(this.rand() * MODEL_VARIANTS);
-    w.bTimer[idx] = 5 + Math.floor(this.rand() * 6) + level * 3;
-    if (w.trees[idx]) {
-      w.trees[idx] = 0;
-      this.events.emit('treesChanged', undefined);
+  /**
+   * Lance un chantier : nouveau bâtiment (éventuellement sur une parcelle de plusieurs cases)
+   * ou évolution d'un bâtiment existant. Renvoie les cases concernées.
+   */
+  private startConstruction(idx: number, level: number, lot?: [number, number, number, number, number] | null): number[] {
+    const w = this.world, n = w.size;
+    let anchor = w.anchorOf(idx);
+    const fresh = w.bState[anchor] === BuildState.Empty;
+    if (fresh) {
+      if (lot) {
+        const [i0, j0, gw, gh, face] = lot;
+        anchor = j0 * n + i0;
+        w.setLot(anchor, gw, gh);
+        w.bFace[anchor] = face;
+      } else w.setLot(anchor, 1, 1);
     }
+    const tiles = w.lotTiles(anchor);
+    const id = fresh ? this.nextBuildingId++ : w.bId[anchor];
+    const variant = fresh || this.rand() < 0.5 ? Math.floor(this.rand() * MODEL_VARIANTS) : w.bVariant[anchor];
+    const timer = 5 + Math.floor(this.rand() * 6) + level * 3 + (tiles.length > 1 ? 3 : 0);
+    let trees = false;
+    for (const t of tiles) {
+      w.bState[t] = BuildState.Construction;
+      w.bLevel[t] = level;
+      w.bVariant[t] = variant;
+      w.bTimer[t] = timer;
+      w.bId[t] = id;
+      if (w.trees[t]) { w.trees[t] = 0; trees = true; }
+    }
+    if (trees) this.events.emit('treesChanged', undefined);
+    return tiles;
   }
 
-  private clearBuilding(idx: number): void {
-    const w = this.world;
-    // Les occupants partent : les foyers cherchent un autre logement, les employés perdent leur emploi
-    if (this.society) {
-      if (w.zones[idx] === Zone.Residential) this.society.citizens.evict(idx, (h) => this.society.findHome(this.society.citizens.hIncome[h], idx));
-      else this.society.citizens.fireAll(idx);
-    }
-    this.utilities.fire[idx] = 0;
-    this.utilities.problemDays[idx] = 0;
-    w.bState[idx] = BuildState.Empty;
-    w.bLevel[idx] = 0;
-    w.bTimer[idx] = 0;
+  /** Les occupants partent : les foyers cherchent un autre logement, les employés perdent leur emploi. */
+  private evictTile(t: number): void {
+    if (!this.society) return;
+    const c = this.society.citizens;
+    if (c.homesTaken[t] || c.residents[t]) c.evict(t, (h) => this.society.findHome(c.hIncome[h], t));
+    if (c.employees[t]) c.fireAll(t);
   }
+
+  /** Rase le bâtiment (toutes les cases de sa parcelle). Renvoie les cases libérées. */
+  private clearBuilding(idx: number): number[] {
+    const w = this.world;
+    const tiles = w.lotTiles(idx);
+    for (const t of tiles) {
+      this.evictTile(t);
+      this.utilities.fire[t] = 0;
+      this.utilities.problemDays[t] = 0;
+      w.bState[t] = BuildState.Empty;
+      w.bLevel[t] = 0;
+      w.bTimer[t] = 0;
+      w.bId[t] = 0;
+    }
+    w.clearLot(idx);
+    return tiles;
+  }
+
+  /** Le bâtiment se vide et devient abandonné (délabré) ; il peut être réhabilité ou démoli. */
+  private abandonBuilding(idx: number, why: string): number[] {
+    const w = this.world;
+    const tiles = w.lotTiles(idx);
+    for (const t of tiles) {
+      this.evictTile(t);
+      this.utilities.fire[t] = 0;
+      this.utilities.problemDays[t] = 0;
+      w.bState[t] = BuildState.Abandoned;
+      w.bTimer[t] = 0;
+    }
+    if (this.dayCount - this.lastAbandonNote > 20) {
+      this.lastAbandonNote = this.dayCount;
+      this.events.emit('notify', { text: `Un bâtiment a été abandonné (${why})`, kind: 'warn', tile: idx });
+    }
+    return tiles;
+  }
+  private lastAbandonNote = -999;
 
   /** Valeur foncière simplifiée : eau et verdure la font monter, l'industrie la fait baisser. */
   landValue(idx: number): number {
@@ -568,11 +653,14 @@ export class Simulation {
         if (w.trees[k]) v += 0.012;
         if (w.tiles[k] === Tile.Road && w.roadType[k] === RoadType.Pedestrian) v += 0.015;
         if (w.tiles[k] === Tile.Road && w.roadType[k] === RoadType.Highway) v -= 0.02;
+        if (w.bState[k] === BuildState.Abandoned) v -= 0.04;
         if (w.bState[k] === BuildState.Built) {
-          const z = w.zones[k];
-          if (z === Zone.Industrial) v -= 0.06;
-          else if (z === Zone.Commercial) v += 0.025;
-          else if (z === Zone.Office) v += 0.02;
+          const z = w.zones[k], kd = kindOf(z);
+          if (z === Zone.Agriculture) v += 0.004;
+          else if (kd === Zone.Industrial) v -= 0.06;
+          else if (z === Zone.Tourism) v += 0.03;
+          else if (kd === Zone.Commercial) v += 0.025;
+          else if (kd === Zone.Office) v += 0.02;
           v += 0.004 * w.bLevel[k];
         }
       }
@@ -589,42 +677,162 @@ export class Simulation {
     return clamp(v, 0, 1);
   }
 
-  private canUpgrade(idx: number): boolean {
-    const w = this.world;
-    const level = w.bLevel[idx];
-    const zone = w.zones[idx] as ZoneType;
+  /**
+   * Critères d'évolution d'un bâtiment (§6) : demande, accessibilité, services, valeur foncière,
+   * santé financière et main-d'œuvre. Chaque critère est affiché sur la fiche.
+   */
+  evolutionCriteria(idx: number): Array<[string, boolean]> {
+    const w = this.world, ut = this.utilities, soc = this.society, c = soc.citizens;
+    const a = w.anchorOf(idx);
+    const level = w.bLevel[a];
+    const zone = w.zones[a];
+    const lot = w.lotTiles(a);
     const pop = this.stats.population;
+    const out: Array<[string, boolean]> = [];
+    out.push([`Demande suffisante (${Math.round((this.zoneDemand[zone] ?? 0) * 100)} %)`, (this.zoneDemand[zone] ?? 0) > 0.15]);
+    out.push(['Accès routier', w.roadDist[a] <= ZONE_DEPTH]);
+    out.push(['Électricité et eau', ut.hasUtility(a, Utility.Power) && ut.hasUtility(a, Utility.Water)]);
+    if (level >= 2) out.push(['Évacuation des eaux usées', ut.hasUtility(a, Utility.Sewage)]);
+    if (level >= 2 && hasHomes(zone)) out.push(['École à portée', (ut.coverage[a] & Coverage.Education) !== 0]);
+    if (zone === Zone.Research) out.push(['École à portée', (ut.coverage[a] & Coverage.Education) !== 0]);
+    const lvNeed = zone === Zone.Agriculture || kindOf(zone) === Zone.Industrial ? 0 : level === 1 ? 0.4 : 0.55;
+    if (lvNeed) out.push([`Valeur foncière ≥ ${Math.round(lvNeed * 100)} %`, this.landValue(a) >= lvNeed]);
+    if (hasHomes(zone)) {
+      let taken = 0, homes = 0;
+      for (const t of lot) { taken += c.homesTaken[t]; homes += soc.homesOf(t); }
+      out.push(['Logements occupés à 80 %', homes > 0 && taken >= homes * 0.8]);
+    }
+    if (hasJobs(zone)) {
+      let emp = 0, slots = 0, good = 0;
+      for (const t of lot) { emp += c.employees[t]; slots += soc.slotsOf(t, 0) + soc.slotsOf(t, 1) + soc.slotsOf(t, 2); good = Math.max(good, soc.goodMonths[t]); }
+      out.push(['Entreprise rentable (2 mois)', good >= 2]);
+      out.push(['Travailleurs disponibles (70 % des postes)', slots > 0 && emp >= slots * 0.7]);
+    }
+    const popNeed = kindOf(zone) === Zone.Industrial ? (level === 1 ? 250 : 1500) : level === 1 ? 200 : 1500;
+    out.push([`Population ≥ ${popNeed.toLocaleString('fr-FR')}`, pop > popNeed || this.sandbox]);
+    return out;
+  }
+
+  private canUpgrade(idx: number): boolean {
+    return this.evolutionCriteria(idx).every(([label, ok]) => ok || label.startsWith('Demande') || label.startsWith('Travailleurs'));
+  }
+
+  /** Qualité du terrain pour un nouveau bâtiment (0 = impossible), selon les nuisances et la valeur foncière (§5). */
+  siteScore(idx: number, zone: ZoneId): number {
+    const info = ZONE_INFO[zone];
     const ut = this.utilities;
-    if (!ut.hasUtility(idx, Utility.Power) || !ut.hasUtility(idx, Utility.Water)) return false;
-    // Un bâtiment ne s'agrandit que s'il est bien occupé (logements) ou rentable (entreprises)
-    if (zone === Zone.Residential && this.society.citizens.homesTaken[idx] < this.society.homesOf(idx) * 0.8) return false;
-    if (zone !== Zone.Residential && this.society.goodMonths[idx] < 2) return false;
-    if (level === 2 && !ut.hasUtility(idx, Utility.Sewage)) return false;
-    if (zone === Zone.Industrial) return pop > (level === 1 ? 250 : 1500);
-    if (level === 2 && zone === Zone.Residential && !(ut.coverage[idx] & Coverage.Education)) return false;
-    const lv = this.landValue(idx);
-    return level === 1 ? pop > 200 && lv > 0.4 : pop > 1500 && lv > 0.55;
+    if (ut.noise[idx] > info.noiseTolerance) return 0;
+    if (zone === Zone.Mixed) {
+      // Pas d'industrie bruyante à proximité, pas de desserte par autoroute seule
+      if (ut.air[idx] > 0.3) return 0;
+    }
+    const lv = this.society.landValue[idx] || this.landValue(idx);
+    if (zone === Zone.ResidentialHigh || zone === Zone.CommercialDense || zone === Zone.Office || zone === Zone.Research) return 0.4 + lv;
+    if (zone === Zone.Agriculture) return 1.3 - lv;
+    if (zone === Zone.Tourism) return 0.3 + lv + (ut.coverage[idx] & Coverage.Park ? 0.4 : 0);
+    return 1;
+  }
+
+  /** Cherche une parcelle (forme choisie selon la zone) contenant la case, dont la façade touche une route (§5). */
+  findParcel(idx: number, zone: ZoneId, shapes?: LotShape[]): [number, number, number, number, number] | null {
+    const w = this.world, n = w.size;
+    const info = ZONE_INFO[zone];
+    const list = [...(shapes ?? info.lots)];
+    // Tirage pondéré de l'ordre d'essai
+    const order: LotShape[] = [];
+    while (list.length) {
+      const total = list.reduce((a, l) => a + l[2], 0);
+      let r = this.rand() * total, k = 0;
+      while (k < list.length - 1 && (r -= list[k][2]) > 0) k++;
+      order.push(list.splice(k, 1)[0]);
+    }
+    const i = idx % n, j = Math.floor(idx / n);
+    const free = (t: number) => w.zones[t] === zone && w.bState[t] === BuildState.Empty && !w.rubble[t] && !w.flooded[t] && w.lotRoot[t] < 0 && w.roadDist[t] <= ZONE_DEPTH;
+    for (const [front, depth] of order) {
+      if (front * depth === 1) return null; // une seule case
+      const faces = [S, E, N, W].sort(() => this.rand() - 0.5);
+      for (const face of faces) {
+        const gw = face === N || face === S ? front : depth;
+        const gh = face === N || face === S ? depth : front;
+        for (let j0 = j - gh + 1; j0 <= j; j0++) for (let i0 = i - gw + 1; i0 <= i; i0++) {
+          if (!w.inBounds(i0, j0) || !w.inBounds(i0 + gw - 1, j0 + gh - 1)) continue;
+          let ok = true;
+          for (let b = j0; b < j0 + gh && ok; b++) for (let a = i0; a < i0 + gw; a++) if (!free(b * n + a)) { ok = false; break; }
+          if (!ok) continue;
+          // Façade : toute la largeur doit toucher une route ouverte aux voitures
+          let road = true;
+          for (let s2 = 0; s2 < front && road; s2++) {
+            const [a, b] = face === S ? [i0 + s2, j0 + gh] : face === N ? [i0 + s2, j0 - 1] : face === E ? [i0 + gw, j0 + s2] : [i0 - 1, j0 + s2];
+            road = w.inBounds(a, b) && w.tiles[b * n + a] === Tile.Road && w.roadType[b * n + a] !== RoadType.Highway;
+          }
+          if (!road || w.rectSlope(i0, j0, gw, gh) > info.maxSlope) continue;
+          return [i0, j0, gw, gh, face];
+        }
+      }
+    }
+    return null;
+  }
+
+  /** Occupants de toutes les cases d'un bâtiment. */
+  lotOccupants(idx: number): number {
+    return this.world.lotTiles(idx).reduce((a, t) => a + this.occupants(t), 0);
+  }
+
+  /** Annonce groupée des évolutions, sans bloquer le joueur (§6). */
+  private announceEvolutions(): void {
+    const w = this.world;
+    const list = this.evolved.filter((k) => w.bState[k] === BuildState.Built);
+    this.evolved = [];
+    if (!list.length) return;
+    const top = list.filter((k) => w.bLevel[k] === 3).length;
+    const name = ZONE_INFO[w.zones[list[0]] as ZoneId]?.buildings.split(',')[0].toLowerCase() ?? 'bâtiment';
+    const text = list.length === 1
+      ? `Un bâtiment évolue au niveau ${w.bLevel[list[0]]} (${name})`
+      : `${list.length} bâtiments ont évolué${top ? `, dont ${top} au niveau 3` : ''}`;
+    this.events.emit('notify', { text, kind: 'info', tile: list[list.length - 1] });
+    this.events.emit('buildingsEvolved', { tiles: list });
   }
 
   /** Habitants (logements) ou employés (entreprises) réellement présents. */
   occupants(idx: number): number {
     const c = this.society.citizens;
-    return this.world.zones[idx] === Zone.Residential ? c.residents[idx] : c.employees[idx];
+    return c.residents[idx] + c.employees[idx];
   }
 
   /** Ferme une entreprise en faillite : employés licenciés, bâtiment vidé (la zone reste). */
   closeBusiness(k: number): void {
-    this.society.citizens.fireAll(k);
+    const w = this.world;
+    const tiles = w.lotTiles(k);
+    // Zone mixte : seule la boutique ferme, les logements restent
+    if (w.zones[k] === Zone.Mixed) {
+      for (const t of tiles) this.society.citizens.fireAll(t);
+      this.events.emit('notify', { text: 'Une boutique de zone mixte a fermé (manque de clients)', kind: 'warn', tile: k });
+      return;
+    }
     this.clearBuilding(k);
-    this.events.emit('buildingsChanged', { tiles: [k] });
+    this.events.emit('buildingsChanged', { tiles });
     this.events.emit('notify', { text: 'Une entreprise a fait faillite et fermé (manque de clients, de marchandises ou de personnel)', kind: 'warn', tile: k });
   }
 
-  capacity(idx: number): number {
+  /** Habitants que le bâtiment peut loger (par case). */
+  homeCapacity(idx: number): number {
     const w = this.world;
     if (w.bState[idx] !== BuildState.Built) return 0;
-    const base = ZONE_INFO[w.zones[idx] as ZoneType].capacity[w.bLevel[idx] - 1];
+    const base = zoneInfo(w.zones[idx])?.homes[w.bLevel[idx] - 1] ?? 0;
     return w.bDamage[idx] ? Math.round(base * (1 - w.bDamage[idx] / 100)) : base;
+  }
+
+  /** Emplois offerts par le bâtiment (par case). */
+  jobCapacity(idx: number): number {
+    const w = this.world;
+    if (w.bState[idx] !== BuildState.Built) return 0;
+    const base = zoneInfo(w.zones[idx])?.jobs[w.bLevel[idx] - 1] ?? 0;
+    return w.bDamage[idx] ? Math.round(base * (1 - w.bDamage[idx] / 100)) : base;
+  }
+
+  /** Capacité totale (habitants + emplois). */
+  capacity(idx: number): number {
+    return this.homeCapacity(idx) + this.jobCapacity(idx);
   }
 
   recomputeStats(): void {
@@ -634,8 +842,8 @@ export class Simulation {
     for (const idx of this.zonedTiles()) {
       if (w.bState[idx] !== BuildState.Built) continue;
       buildings++;
-      const z = w.zones[idx] as ZoneType;
-      if (z !== Zone.Residential) jobs[z] += this.capacity(idx);
+      const jk = jobKind(w.zones[idx]);
+      if (jk) jobs[jk] += this.jobCapacity(idx);
     }
     const cz = this.society.citizens;
     const population = cz.population;
@@ -673,6 +881,7 @@ export class Simulation {
     for (const z of [Zone.Residential, Zone.Commercial, Zone.Industrial, Zone.Office] as ZoneType[]) {
       if (z !== Zone.Office || this.isUnlocked(z)) demand[z] = clamp(demand[z] - (this.taxes[z] - DEFAULT_TAX) * 0.035);
     }
+    this.computeZoneDemand(demand, population);
 
     // Recettes
     // Impôt sur le revenu des ménages et impôt sur les bénéfices des entreprises
@@ -929,13 +1138,40 @@ export class Simulation {
     this.events.emit('roadsChanged', { tiles });
   }
 
+  /** Demande de chaque type de zone : densités, zone mixte et zones spécialisées (§5). */
+  private computeZoneDemand(demand: Record<ZoneType, number>, population: number): void {
+    const w = this.world, soc = this.society, us = this.utilities.stats;
+    const jobsOf: Record<number, number> = {};
+    for (const idx of this.zonedTiles()) if (w.bState[idx] === BuildState.Built) jobsOf[w.zones[idx]] = (jobsOf[w.zones[idx]] ?? 0) + this.jobCapacity(idx);
+    const j = (z: Zone) => jobsOf[z] ?? 0;
+    const happy = population ? us.happiness : 0.6;
+    // Attrait touristique : parcs, eau, bonheur, sécurité
+    this.tourismAppeal = clamp((us.coverage[Coverage.Park] ?? 0) * 0.5 + (happy - 0.4) * 0.8 + (1 - this.crimeIndex) * 0.2 + Math.min(0.2, population / 20000), 0, 1);
+    const bs = soc.stats;
+    const d: Record<number, number> = {};
+    d[Zone.ResidentialLow] = demand[Zone.Residential] + 0.05;
+    d[Zone.Residential] = demand[Zone.Residential];
+    d[Zone.ResidentialHigh] = demand[Zone.Residential] + (population > 3000 ? 0.1 : -0.05);
+    d[Zone.Commercial] = demand[Zone.Commercial];
+    d[Zone.CommercialDense] = demand[Zone.Commercial] + (population > 4000 ? 0.1 : -0.1);
+    d[Zone.Office] = demand[Zone.Office];
+    d[Zone.Industrial] = demand[Zone.Industrial];
+    d[Zone.Mixed] = (demand[Zone.Residential] + demand[Zone.Commercial]) / 2 + 0.05;
+    d[Zone.Agriculture] = demand[Zone.Industrial] * 0.5 + 0.2 - j(Zone.Agriculture) / (population * 0.05 + 40);
+    d[Zone.Logistics] = demand[Zone.Industrial] * 0.4 + (bs.goodsDemand ? (bs.imports / bs.goodsDemand) * 0.6 : 0) - j(Zone.Logistics) / (population * 0.04 + 30);
+    d[Zone.Research] = this.isUnlocked(Zone.Research) ? demand[Zone.Office] * 0.6 + (this.demo.education - 0.35) - j(Zone.Research) / (population * 0.02 + 20) : 0;
+    d[Zone.Tourism] = this.isUnlocked(Zone.Tourism) ? this.tourismAppeal * 0.8 - 0.1 - j(Zone.Tourism) / (population * 0.03 + 30) : 0;
+    for (const z in d) d[z] = clamp(d[z] - (this.taxes[kindOf(Number(z)) as ZoneType] - DEFAULT_TAX) * (Number(z) > 4 ? 0.035 : 0));
+    this.zoneDemand = d;
+  }
+
   // ---------- Zonage ----------
 
   estimateZone(area: number[], zone: Zone): { valid: number[]; invalid: number[]; reason: string | null } {
     const w = this.world;
     const out = { valid: [] as number[], invalid: [] as number[], reason: null as string | null };
-    if (zone !== Zone.None && !this.isUnlocked(zone as ZoneType)) {
-      out.reason = `Débloqué à ${ZONE_INFO[zone as ZoneType].unlockPop} habitants`;
+    if (zone !== Zone.None && !this.isUnlocked(zone)) {
+      out.reason = `Débloqué à ${ZONE_INFO[zone as ZoneId].unlockPop.toLocaleString('fr-FR')} habitants`;
       out.invalid = area;
       return out;
     }
@@ -1133,13 +1369,266 @@ export class Simulation {
     return true;
   }
 
+  // ---------- Bibliothèque : placement manuel, déplacement, amélioration (§6) ----------
+
+  /** Coût de construction d'un modèle de la bibliothèque. */
+  constructionCost(zone: ZoneId, level: number, tiles: number): number {
+    return Math.round(ZONE_INFO[zone].cost * tiles * level);
+  }
+
+  /** Coût d'amélioration au niveau suivant. */
+  upgradeCost(idx: number): number {
+    const w = this.world, a = w.anchorOf(idx);
+    const info = zoneInfo(w.zones[a]);
+    return info ? Math.round(info.cost * w.lotTiles(a).length * (w.bLevel[a] + 1) * 0.5) : 0;
+  }
+
+  /** Coût de démolition (moitié prix pour un bâtiment abandonné). */
+  demolishCost(idx: number): number {
+    const w = this.world, a = w.anchorOf(idx);
+    return Math.round(w.lotTiles(a).length * (20 + 15 * Math.max(1, w.bLevel[a])) * (w.bState[a] === BuildState.Abandoned ? 0.5 : 1));
+  }
+
+  /** Entretien mensuel à la charge du propriétaire (indicatif). */
+  ownerUpkeep(idx: number): number {
+    const w = this.world, a = w.anchorOf(idx);
+    const info = zoneInfo(w.zones[a]);
+    return info ? Math.round(info.cost * w.lotTiles(a).length * Math.max(1, w.bLevel[a]) * 0.004) : 0;
+  }
+
+  /** Rectangle occupé par un modèle posé en (i, j) avec la façade orientée vers `face`. */
+  placementRect(spec: BuildingSpec, i: number, j: number, face: number): [number, number, number, number] {
+    const gw = face === E || face === W ? spec.depth : spec.front;
+    const gh = face === E || face === W ? spec.front : spec.depth;
+    return [i - Math.floor((gw - 1) / 2), j - Math.floor((gh - 1) / 2), gw, gh];
+  }
+
+  /** Cases de route le long de la façade d'un rectangle. */
+  private frontRoads(rect: [number, number, number, number], face: number): number {
+    const w = this.world;
+    const [i0, j0, gw, gh] = rect;
+    let c = 0;
+    const len = face === N || face === S ? gw : gh;
+    for (let s2 = 0; s2 < len; s2++) {
+      const [a, b] = face === S ? [i0 + s2, j0 + gh] : face === N ? [i0 + s2, j0 - 1] : face === E ? [i0 + gw, j0 + s2] : [i0 - 1, j0 + s2];
+      if (w.inBounds(a, b) && w.carsAllowed(w.index(a, b))) c++;
+    }
+    return c;
+  }
+
+  /**
+   * Vérifie le terrain pour un placement manuel : emprise libre, pente, route sur la façade,
+   * distance de sécurité, raccordement (avertissement), coût (§6).
+   * face = 0 : orientation automatique vers la route.
+   */
+  estimatePlace(spec: BuildingSpec, i: number, j: number, face = 0, ignore?: Set<number>, costMul = 1): PlaceEstimate {
+    const w = this.world, n = w.size;
+    const info = ZONE_INFO[spec.zone];
+    if (!face) {
+      let best = S, bestN = -1;
+      for (const f of [S, E, N, W]) { const c = this.frontRoads(this.placementRect(spec, i, j, f), f); if (c > bestN) { bestN = c; best = f; } }
+      face = best;
+    }
+    const rect = this.placementRect(spec, i, j, face);
+    const [i0, j0, gw, gh] = rect;
+    const out: PlaceEstimate = { ok: false, tiles: [], invalid: [], reasons: [], warnings: [], cost: 0, rect, face };
+    const reason = (r: string) => { if (!out.reasons.includes(r)) out.reasons.push(r); };
+    let trees = 0;
+    for (let b = j0; b < j0 + gh; b++) for (let a = i0; a < i0 + gw; a++) {
+      if (!w.inBounds(a, b)) { reason('Hors de la carte'); continue; }
+      const k = b * n + a;
+      out.tiles.push(k);
+      let bad: string | null = null;
+      if (w.isWater(a, b)) bad = "Impossible de construire sur l'eau";
+      else if (w.tiles[k] === Tile.Road) bad = 'Emprise occupée par une route';
+      else if (w.service[k] && !ignore?.has(k)) bad = 'Emprise occupée par un équipement';
+      else if (w.bState[k] && !ignore?.has(k)) bad = 'Emprise occupée par un bâtiment';
+      else if (w.rubble[k]) bad = 'Gravats à déblayer';
+      if (bad) { out.invalid.push(k); reason(bad); }
+      trees += w.trees[k];
+    }
+    if (!this.isUnlocked(spec.zone)) reason(`Débloqué à ${info.unlockPop.toLocaleString('fr-FR')} habitants`);
+    if (out.tiles.length === gw * gh && w.rectSlope(i0, j0, gw, gh) > info.maxSlope) { reason('Pente trop forte : aplanissez le terrain'); out.invalid.push(...out.tiles); }
+    if (!this.frontRoads(rect, face)) reason('Absence de route devant la façade (R pour pivoter)');
+    // Distance de sécurité entre industrie et logements
+    const polluting = kindOf(spec.zone) === Zone.Industrial && spec.zone !== Zone.Agriculture;
+    if (polluting || hasHomes(spec.zone)) {
+      let conflict = false;
+      for (let b = j0 - 2; b < j0 + gh + 2 && !conflict; b++) for (let a = i0 - 2; a < i0 + gw + 2; a++) {
+        if (!w.inBounds(a, b)) continue;
+        const k = b * n + a;
+        if (!w.bState[k] || ignore?.has(k)) continue;
+        const z = w.zones[k];
+        const other = kindOf(z) === Zone.Industrial && z !== Zone.Agriculture;
+        if ((polluting && hasHomes(z)) || (hasHomes(spec.zone) && other)) { conflict = true; break; }
+      }
+      if (conflict) reason('Distance de sécurité insuffisante (industrie et logements à moins de 3 cases)');
+    }
+    // Raccordement : prévenir sans bloquer
+    const probe = out.tiles.find((k) => !out.invalid.includes(k));
+    if (probe !== undefined) {
+      const miss = this.utilities.missing(probe);
+      if (miss.length) out.warnings.push(`Pas encore raccordé : ${miss.map((u) => (u === Utility.Power ? 'électricité' : 'eau')).join(' et ')}`);
+      else if (this.utilities.noise[probe] > info.noiseTolerance) out.warnings.push('Quartier trop bruyant pour ce type de bâtiment');
+    }
+    out.cost = Math.round((this.constructionCost(spec.zone, spec.level, gw * gh) + trees * TREE_CLEAR_COST) * costMul);
+    if (!this.sandbox && out.cost > this.money) reason('Fonds insuffisants');
+    out.ok = out.reasons.length === 0;
+    return out;
+  }
+
+  /** Pose un bâtiment de la bibliothèque. */
+  placeBuilding(spec: BuildingSpec, i: number, j: number, face = 0, keep?: { id: number; variant: number }): boolean {
+    const est = this.estimatePlace(spec, i, j, face);
+    if (!est.ok) { this.events.emit('notify', { text: est.reasons[0], kind: 'warn' }); return false; }
+    this.build(spec, est, keep, keep ? 2 : 4);
+    this.spend(est.cost);
+    this.events.emit('notify', { text: `${ZONE_INFO[spec.zone].name} posé (${est.rect[2]}×${est.rect[3]} cases)`, kind: 'info', tile: est.tiles[0] });
+    return true;
+  }
+
+  private build(spec: BuildingSpec, est: PlaceEstimate, keep: { id: number; variant: number } | undefined, days: number): void {
+    const w = this.world;
+    const [i0, j0, gw, gh] = est.rect;
+    const anchor = w.index(i0, j0);
+    let trees = false;
+    for (const t of est.tiles) {
+      w.zones[t] = spec.zone;
+      w.rubble[t] = 0;
+      if (w.trees[t]) { w.trees[t] = 0; trees = true; }
+    }
+    w.setLot(anchor, gw, gh);
+    w.bFace[anchor] = est.face;
+    w.bStyle[anchor] = spec.style;
+    w.bManual[anchor] = 1;
+    const id = keep?.id ?? this.nextBuildingId++;
+    const variant = keep?.variant ?? spec.variant ?? Math.floor(this.rand() * MODEL_VARIANTS);
+    for (const t of est.tiles) {
+      w.bState[t] = BuildState.Construction;
+      w.bLevel[t] = spec.level;
+      w.bVariant[t] = variant;
+      w.bTimer[t] = days;
+      w.bId[t] = id;
+    }
+    this.zonedDirty = true;
+    if (trees) this.events.emit('treesChanged', undefined);
+    this.recomputeStats();
+    this.events.emit('zonesChanged', undefined);
+    this.events.emit('buildingsChanged', { tiles: est.tiles });
+  }
+
+  /** Modèle équivalent à un bâtiment existant (pour le déplacer). */
+  specOf(idx: number): BuildingSpec | null {
+    const w = this.world, a = w.anchorOf(idx);
+    if (!w.bState[a] || !w.zones[a]) return null;
+    const [gw, gh] = w.lotDims(a);
+    const face = w.faceOf(a);
+    const front = face === E || face === W ? gh : gw;
+    const depth = face === E || face === W ? gw : gh;
+    return { zone: w.zones[a] as ZoneId, level: Math.max(1, w.bLevel[a]), front, depth, style: w.bStyle[a], variant: w.bVariant[a] };
+  }
+
+  /** Coût d'un déplacement : 30 % de la construction. */
+  static readonly MOVE_COST = 0.3;
+
+  /** Estimation du déplacement d'un bâtiment (ou d'un équipement) vers (i, j). */
+  estimateMove(from: number, i: number, j: number, face = 0): PlaceEstimate | null {
+    const w = this.world;
+    if (w.service[from]) {
+      const svc = w.service[from] as Service;
+      const info = SERVICE_INFO[svc as Exclude<Service, Service.None>];
+      const k = w.index(i, j);
+      const out: PlaceEstimate = { ok: false, tiles: [k], invalid: [], reasons: [], warnings: [], cost: Math.round(info.cost * 0.2), rect: [i, j, 1, 1], face: S };
+      const block = k === from ? null : w.serviceBlocker(i, j, svc);
+      if (block) { out.reasons.push(block); out.invalid.push(k); }
+      if (w.bState[k] && k !== from) { out.reasons.push('Emprise occupée par un bâtiment'); out.invalid.push(k); }
+      if (this.emergency.inService(from) > 0) out.reasons.push('Véhicules en mission : attendez leur retour');
+      if (!this.sandbox && out.cost > this.money) out.reasons.push('Fonds insuffisants');
+      out.ok = !out.reasons.length;
+      return out;
+    }
+    const spec = this.specOf(from);
+    if (!spec) return null;
+    return this.estimatePlace(spec, i, j, face, new Set(w.lotTiles(from)), Simulation.MOVE_COST);
+  }
+
+  /** Déplace un bâtiment : les occupants partent, le bâtiment est reconstruit à l'identique ailleurs. */
+  moveBuilding(from: number, i: number, j: number, face = 0): boolean {
+    const w = this.world;
+    const est = this.estimateMove(from, i, j, face);
+    if (!est) return false;
+    if (!est.ok) { this.events.emit('notify', { text: est.reasons[0], kind: 'warn' }); return false; }
+    if (w.service[from]) {
+      const svc = w.service[from];
+      const to = est.tiles[0];
+      if (to === from) return false;
+      w.service[from] = Service.None;
+      if (w.zones[to]) { w.zones[to] = Zone.None; this.zonedDirty = true; }
+      if (w.trees[to]) { w.trees[to] = 0; this.events.emit('treesChanged', undefined); }
+      w.service[to] = svc;
+      this.spend(est.cost);
+      this.transit.refreshAll();
+      this.recomputeStats();
+      this.events.emit('servicesChanged', undefined);
+      this.events.emit('transitChanged', undefined);
+      this.events.emit('notify', { text: `${SERVICE_INFO[svc as Exclude<Service, Service.None>].name} déplacé(e)`, kind: 'info', tile: to });
+      return true;
+    }
+    const spec = this.specOf(from)!;
+    const a = w.anchorOf(from);
+    const keep = { id: w.bId[a], variant: w.bVariant[a] };
+    const old = this.clearBuilding(a);
+    for (const t of old) w.zones[t] = Zone.None;
+    this.build(spec, est, keep, 2);
+    this.spend(est.cost);
+    this.events.emit('buildingsChanged', { tiles: old });
+    this.events.emit('notify', { text: 'Bâtiment déplacé : les occupants reviendront après le chantier', kind: 'info', tile: est.tiles[0] });
+    return true;
+  }
+
+  /** Amélioration payée par la ville (si les réseaux le permettent). */
+  upgradeBuilding(idx: number): boolean {
+    const w = this.world, ut = this.utilities, a = w.anchorOf(idx);
+    const fail = (text: string) => { this.events.emit('notify', { text, kind: 'warn', tile: a }); return false; };
+    if (w.bState[a] !== BuildState.Built || !w.zones[a]) return fail('Seul un bâtiment actif peut être amélioré');
+    if (w.bLevel[a] >= 3) return fail('Niveau maximal atteint');
+    if (!ut.hasUtility(a, Utility.Power) || !ut.hasUtility(a, Utility.Water)) return fail('Raccordez d\'abord l\'électricité et l\'eau');
+    if (w.bLevel[a] >= 2 && !ut.hasUtility(a, Utility.Sewage)) return fail('Le niveau 3 exige l\'évacuation des eaux usées');
+    const cost = this.upgradeCost(a);
+    if (!this.sandbox && cost > this.money) return fail('Fonds insuffisants');
+    const tiles = this.startConstruction(a, w.bLevel[a] + 1);
+    this.spend(cost);
+    this.recomputeStats();
+    this.events.emit('buildingsChanged', { tiles });
+    return true;
+  }
+
+  /** Change l'orientation d'un bâtiment existant (quart de tour). */
+  rotateBuilding(idx: number): void {
+    const w = this.world, a = w.anchorOf(idx);
+    if (!w.bState[a]) return;
+    const [gw, gh] = w.lotDims(a);
+    const order = [S, W, N, E];
+    let f = order[(order.indexOf(w.faceOf(a)) + 1) % 4];
+    // Une parcelle rectangulaire ne peut que se retourner (180°)
+    if (gw !== gh) f = order[(order.indexOf(w.faceOf(a)) + 2) % 4];
+    w.bFace[a] = f;
+    this.events.emit('buildingsChanged', { tiles: [] });
+  }
+
   // ---------- Démolition ----------
 
   estimateBulldoze(area: number[]): { refund: number; cost: number; tiles: number[] } {
     const w = this.world;
     let refund = 0, cost = 0;
     const tiles: number[] = [];
+    // Un bâtiment sur plusieurs cases est démoli en entier
+    const all = new Set<number>();
     for (const idx of area) {
+      if (w.bState[idx] && !w.service[idx] && w.tiles[idx] !== Tile.Road) for (const t of w.lotTiles(idx)) all.add(t);
+      else all.add(idx);
+    }
+    for (const idx of all) {
       if (w.tiles[idx] === Tile.Road) {
         refund += Math.round((ROAD_INFO[w.roadType[idx] as RoadType]?.cost ?? ROAD_COST) * ROAD_REFUND);
         tiles.push(idx);
@@ -1147,14 +1636,14 @@ export class Simulation {
         refund += Math.round(SERVICE_INFO[w.service[idx] as Exclude<Service, Service.None>].cost * 0.25);
         tiles.push(idx);
       } else if (w.bState[idx]) {
-        cost += 5 * Math.max(1, w.bLevel[idx]);
+        cost += this.demolishCost(idx) / w.lotTiles(idx).length;
         tiles.push(idx);
       } else if (w.trees[idx]) {
         cost += w.trees[idx] * TREE_CLEAR_COST;
         tiles.push(idx);
       }
     }
-    return { refund, cost, tiles };
+    return { refund, cost: Math.round(cost), tiles };
   }
 
   bulldoze(area: number[]): void {
@@ -1181,8 +1670,7 @@ export class Simulation {
         w.service[idx] = Service.None;
         services = true;
       } else if (w.bState[idx]) {
-        this.clearBuilding(idx);
-        buildings.push(idx);
+        buildings.push(...this.clearBuilding(idx));
       } else if (w.trees[idx]) {
         w.trees[idx] = 0;
         trees = true;

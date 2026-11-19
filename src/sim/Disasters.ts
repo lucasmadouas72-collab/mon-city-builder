@@ -1,5 +1,5 @@
 import type { Simulation } from './Simulation';
-import { BuildState, Zone } from './zones';
+import { BuildState, Zone, hasHomes, kindOf } from './zones';
 import { Coverage, Service } from './services';
 import { DISASTER_LEVELS, type DisasterLevel } from '../game/config';
 
@@ -118,7 +118,7 @@ export class Disasters {
       const i = k % n, j = (k - i) / n;
       if (type === 'flood') { if (!w.isWater(i, j) && w.tileMinMax(i, j)[0] < 0.9 && (w.bState[k] === BuildState.Built || w.tiles[k] === 1)) candidates.push(k); }
       else if (type === 'forestFire') { if (w.trees[k] >= 2) candidates.push(k); }
-      else if (type === 'industrial') { if (w.bState[k] === BuildState.Built && w.zones[k] === Zone.Industrial) candidates.push(k); }
+      else if (type === 'industrial') { if (w.bState[k] === BuildState.Built && kindOf(w.zones[k]) === Zone.Industrial && w.zones[k] !== Zone.Agriculture) candidates.push(k); }
       else if (type === 'blackout') { if (w.service[k] === Service.PowerPlant || w.service[k] === Service.WindTurbine) candidates.push(k); }
       else if (w.bState[k] === BuildState.Built) candidates.push(k);
     }
@@ -223,7 +223,7 @@ export class Disasters {
     if (amount <= 0 || w.bState[k] !== BuildState.Built) return;
     const before = w.bDamage[k];
     const people = sim.occupants(k);
-    const isHome = w.zones[k] === Zone.Residential;
+    const isHome = hasHomes(w.zones[k]);
     let victims = 0;
     if (!d.evacuated && isHome) victims = Math.round(people * (Math.min(100, w.bDamage[k] + amount) >= 100 ? 0.05 : amount / 100 * 0.03) * (d.warned ? 0.4 : 1));
     if (victims) d.casualties += sim.society.citizens.casualties(k, victims);

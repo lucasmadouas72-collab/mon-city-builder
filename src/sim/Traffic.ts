@@ -1,7 +1,7 @@
 import { rng } from '../core/noise';
 import type { World } from './World';
 import { DIRS8, LIGHT_PHASE, ROAD_INFO, type RoadType } from './roads';
-import { BuildState, Zone } from './zones';
+import { BuildState, Zone, hasHomes, hasJobs, kindOf } from './zones';
 
 /**
  * Trafic : chaque véhicule fait un vrai trajet (domicile → travail, courses, livraisons)
@@ -158,11 +158,11 @@ export class Traffic {
       if (w.bState[idx] !== BuildState.Built) continue;
       const cap = capacity(idx);
       const z = w.zones[idx];
-      if (z === Zone.Residential) add(lists.h, idx, cap);
-      else {
+      if (hasHomes(z)) add(lists.h, idx, cap);
+      if (hasJobs(z)) {
         add(lists.j, idx, cap);
-        if (z === Zone.Commercial) add(lists.s, idx, cap);
-        if (z === Zone.Industrial) add(lists.f, idx, cap);
+        if (kindOf(z) === Zone.Commercial || z === Zone.Mixed) add(lists.s, idx, cap);
+        if (kindOf(z) === Zone.Industrial) add(lists.f, idx, cap * (z === Zone.Logistics ? 2 : 1));
       }
     }
     this.homes = lists.h; this.jobs = lists.j; this.shops = lists.s; this.factories = lists.f;

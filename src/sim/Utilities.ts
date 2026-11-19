@@ -1,6 +1,6 @@
 import type { World } from './World';
 import { computeReach, ROAD_SERVICES, type FacilityLoad, type ReachStats } from './ServiceReach';
-import { BuildState, Zone } from './zones';
+import { BuildState, Zone, hasHomes, kindOf, zoneInfo } from './zones';
 import {
   CONSUMPTION, Coverage, SERVICE_INFO, Service, UTILITIES, Utility, type BudgetKey,
 } from './services';
@@ -130,9 +130,12 @@ export class Utilities {
     for (let idx = 0; idx < w.tiles.length; idx++) {
       const i = idx % n, j = (idx - i) / n;
       if (w.bState[idx] === BuildState.Built) {
-        const z = w.zones[idx], lvl = w.bLevel[idx];
-        if (z === Zone.Industrial) { splat(air, i, j, 0.07 * lvl, 5); splat(noise, i, j, 0.06, 3); }
-        else if (z === Zone.Commercial) splat(noise, i, j, 0.025 * lvl, 2);
+        const p = zoneInfo(w.zones[idx])?.pollution, lvl = w.bLevel[idx];
+        if (p) {
+          if (p.air) splat(air, i, j, 0.07 * lvl * p.air, 5);
+          if (p.noise >= 1) splat(noise, i, j, 0.06 * Math.min(1.2, p.noise) * (kindOf(w.zones[idx]) === Zone.Industrial ? 1 : 0.42 * lvl), kindOf(w.zones[idx]) === Zone.Industrial ? 3 : 2);
+          else if (p.noise) splat(noise, i, j, 0.025 * lvl * p.noise, 2);
+        }
       }
       const s = w.service[idx];
       if (s === Service.PowerPlant) splat(air, i, j, 0.35, 8);
@@ -157,10 +160,10 @@ export class Utilities {
     for (let idx = 0; idx < w.tiles.length; idx++) {
       const i = idx % n, j = (idx - i) / n;
       if (w.bState[idx] === BuildState.Built) {
-        const z = w.zones[idx], lvl = w.bLevel[idx];
+        const p = zoneInfo(w.zones[idx])?.pollution, lvl = w.bLevel[idx];
         if (!(this.served[idx] & (1 << Utility.Sewage))) splatWater(i, j, 0.03 * lvl, 9);
-        if (z === Zone.Industrial) splatWater(i, j, 0.05 * lvl, 4);
-        if (z === Zone.Commercial || z === Zone.Office) splat(light, i, j, 0.05 * lvl, 3);
+        if (p?.water) splatWater(i, j, 0.05 * lvl * p.water, 4);
+        if (p && p.light >= 0.5) splat(light, i, j, 0.05 * lvl * Math.min(1.5, p.light), 3);
       }
       if (w.service[idx] === Service.Sewage) splatWater(i, j, 0.04, 3);
       if (w.tiles[idx] === 1 && (w.roadType[idx] === 2 || w.roadType[idx] === 3)) light[idx] += 0.04;
@@ -333,13 +336,13 @@ export class Utilities {
       h -= Math.min(0.35, this.air[idx] * 0.45 + this.noise[idx] * 0.25);
       h -= this.crime[idx] * 0.18;
       if (this.contaminated[idx]) h -= 0.12;
-      h -= w.soilPol[idx] * 0.12 + (w.zones[idx] === Zone.Residential ? this.light[idx] * 0.05 : 0);
+      h -= w.soilPol[idx] * 0.12 + (hasHomes(w.zones[idx]) ? this.light[idx] * 0.05 : 0);
       if (w.bDamage[idx]) h -= w.bDamage[idx] / 400;
       h += this.happinessOffset;
       if (this.fire[idx]) h -= 0.3;
       h = Math.max(0, Math.min(1, h));
       this.happiness[idx] = h;
-      const weight = w.zones[idx] === Zone.Residential ? this.capacity(idx) : this.capacity(idx) * 0.3;
+      const weight = hasHomes(w.zones[idx]) ? this.capacity(idx) : this.capacity(idx) * 0.3;
       happySum += h * weight;
       happyWeight += weight;
     }
