@@ -6,7 +6,7 @@ import { Overlay } from './Overlay';
 
 export type ViewMode =
   | 'none' | 'traffic' | 'power' | 'water' | 'sewage' | 'garbage'
-  | 'health' | 'education' | 'police' | 'fire' | 'park' | 'happiness' | 'land' | 'transport' | 'air' | 'noise' | 'crime' | 'waterPol' | 'soil' | 'light' | 'damage' | 'risk' | 'rent' | 'occupancy' | 'resources' | 'condition' | 'districts' | 'speed' | 'volume' | 'parking';
+  | 'health' | 'education' | 'police' | 'fire' | 'park' | 'happiness' | 'land' | 'transport' | 'air' | 'noise' | 'crime' | 'waterPol' | 'soil' | 'light' | 'damage' | 'risk' | 'rent' | 'occupancy' | 'resources' | 'condition' | 'districts' | 'speed' | 'volume' | 'parking' | 'leisure';
 
 export const VIEW_LABELS: Array<[ViewMode, string]> = [
   ['traffic', 'Trafic (densité)'],
@@ -24,6 +24,7 @@ export const VIEW_LABELS: Array<[ViewMode, string]> = [
   ['crime', 'Délinquance'],
   ['fire', 'Pompiers'],
   ['park', 'Parcs'],
+  ['leisure', 'Loisirs, culture et sport'],
   ['air', "Pollution de l'air"],
   ['noise', 'Pollution sonore'],
   ['waterPol', "Pollution de l'eau"],
@@ -52,6 +53,7 @@ const COV: Partial<Record<ViewMode, [Coverage, Service]>> = {
   police: [Coverage.Police, Service.Police],
   fire: [Coverage.Fire, Service.FireStation],
   park: [Coverage.Park, Service.Park],
+  leisure: [Coverage.Leisure, Service.Museum],
 };
 
 const TRAFFIC_LEVELS: Array<[number, string]> = [[0.35, '#22c55e'], [1.0, '#a3e635'], [1.8, '#facc15'], [2.8, '#f97316'], [Infinity, '#ef4444']];
@@ -78,6 +80,7 @@ const LEGENDS: Record<Exclude<ViewMode, 'none'>, Legend> = {
   water: { title: 'Eau potable', unit: 'raccordement, pression et qualité', items: [['#ffffff', 'Pompage, traitement, château d’eau'], ['#22c55e', 'Alimenté'], ['#facc15', 'Basse pression'], ['#a855f7', 'Eau contaminée'], ['#ef4444', 'Sans eau']], explanation: 'Captage, traitement, stockage puis distribution : chaque étape limite le débit. Loin d’une station ou d’un château d’eau, la pression baisse.' },
   sewage: { title: 'Égouts', unit: 'raccordement', items: [['#ffffff', 'Station d’épuration'], ['#22c55e', 'Raccordé'], ['#ef4444', 'Non raccordé']], explanation: 'Sans épuration, les immeubles ne peuvent pas passer au niveau 3.' },
   garbage: { title: 'Déchets', unit: 'jours d’accumulation', items: [['#ffffff', 'Centre de traitement ou dépôt'], ['#22c55e', 'Collecté récemment'], ['#facc15', '5 à 10 jours'], ['#f97316', 'Plus de 10 jours'], ['#ef4444', 'Plus de 20 jours']], explanation: 'Les camions partent des centres et collectent autour des quartiers les plus chargés. Les déchets accumulés réduisent le bonheur.' },
+  leisure: { title: 'Loisirs, culture et sport', unit: 'proximité d’un équipement', items: [[SERVICE_INFO[Service.Museum].color, 'À proximité d’un équipement de loisirs'], ['#7f1d1d', 'Sans équipement proche']], explanation: 'Musées, salles, équipements sportifs, plages et attractions rendent les quartiers plus agréables et attirent des visiteurs.' },
   speed: { title: 'Vitesse moyenne', unit: 'part de la vitesse normale', items: [['#22c55e', '> 80 %'], ['#a3e635', '60 à 80 %'], ['#facc15', '40 à 60 %'], ['#f97316', '20 à 40 %'], ['#ef4444', '< 20 % (arrêt)']], explanation: 'Vitesse réelle des véhicules sur chaque route : feux, bouchons, accidents, travaux, zones 30. Les cases en orange et rouge allongent les temps de trajet.' },
   volume: { title: 'Volume de trafic', unit: 'passages récents par case', items: [['#dbeafe', 'Faible'], ['#93c5fd', 'Moyen'], ['#3b82f6', 'Fort'], ['#1d4ed8', 'Très fort'], ['#a855f7', 'Accident ou travaux']], explanation: 'Nombre de véhicules passés récemment sur chaque case : les grands axes ressortent. Différent de la densité : une autoroute fluide a un gros volume et une faible densité.' },
   parking: { title: 'Stationnement', unit: 'demande / places disponibles', items: [['#22c55e', 'Places suffisantes'], ['#facc15', 'Presque saturé'], ['#f97316', 'Saturé'], ['#ef4444', 'Très saturé (ventes en baisse)'], ['#64748b', 'Parking']], explanation: 'Places sur voirie (rues proches) et parkings, comparées aux besoins des employés et des clients des commerces et bureaux. Un parking près d’un arrêt devient un parking relais.' },

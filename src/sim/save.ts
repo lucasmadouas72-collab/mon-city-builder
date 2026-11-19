@@ -60,6 +60,7 @@ export function serialize(sim: Simulation, config: GameConfig, camera?: CameraSt
       nextBuildingId: sim.nextBuildingId,
       waste: sim.waste.serialize(),
       districts: sim.districts.serialize(),
+      tourism: sim.tourism.serialize(),
       council: sim.council.serialize(),
       ledger: sim.ledger,
       investMonth: sim.investMonth,
@@ -101,6 +102,7 @@ export function applySave(sim: Simulation, file: SaveFile): void {
   sim.nextBuildingId = s.nextBuildingId ?? 1;
   sim.waste.restore(s.waste);
   sim.districts.restore(s.districts);
+  sim.tourism.restore(s.tourism);
   sim.council.restore(s.council);
   sim.ledger = s.ledger ?? [];
   sim.investMonth = s.investMonth ?? {};

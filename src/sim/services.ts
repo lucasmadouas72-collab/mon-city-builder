@@ -36,6 +36,24 @@ export const enum Service {
   Parking = 32,
   Airport = 33,
   Harbor = 34,
+  Museum = 35,
+  Monument = 36,
+  Theater = 37,
+  Cinema = 38,
+  ConcertHall = 39,
+  CongressCenter = 40,
+  Stadium = 41,
+  Arena = 42,
+  Gym = 43,
+  Pool = 44,
+  SportsField = 45,
+  IceRink = 46,
+  Zoo = 47,
+  Aquarium = 48,
+  Beach = 49,
+  Promenade = 50,
+  AmusementPark = 51,
+  TouristInfo = 52,
 }
 
 /** Ressources distribuées par le réseau routier. */
@@ -57,20 +75,22 @@ export const enum Coverage {
   Police = 4,
   Fire = 8,
   Park = 16,
+  Leisure = 32,
 }
-export const COVERAGES = [Coverage.Health, Coverage.Education, Coverage.Police, Coverage.Fire, Coverage.Park] as const;
+export const COVERAGES = [Coverage.Health, Coverage.Education, Coverage.Police, Coverage.Fire, Coverage.Park, Coverage.Leisure] as const;
 export const COVERAGE_NAMES: Record<number, string> = {
   [Coverage.Health]: 'Santé',
   [Coverage.Education]: 'Éducation',
   [Coverage.Police]: 'Police',
   [Coverage.Fire]: 'Pompiers',
   [Coverage.Park]: 'Parcs',
+  [Coverage.Leisure]: 'Loisirs',
 };
 
-export type ServiceCategory = 'utilities' | 'services' | 'transport';
+export type ServiceCategory = 'utilities' | 'services' | 'transport' | 'leisure';
 
 /** Postes budgétaires réglables (50 % à 150 %). */
-export type BudgetKey = 'utilities' | 'health' | 'education' | 'police' | 'fire' | 'parks' | 'transport' | 'maintenance';
+export type BudgetKey = 'utilities' | 'health' | 'education' | 'police' | 'fire' | 'parks' | 'transport' | 'maintenance' | 'culture';
 
 export interface ServiceInfo {
   name: string;
@@ -112,6 +132,8 @@ export interface ServiceInfo {
   /** Doit toucher une voie ferrée / une voie de tram. */
   needsRail?: boolean;
   needsTram?: boolean;
+  /** Équipement de loisirs : visiteurs par mois, prix d'entrée, attrait touristique, types d'événements accueillis. */
+  leisure?: { capacity: number; ticket: number; appeal: number; kind: 'culture' | 'sport' | 'nature' | 'tourism'; events?: string[] };
 }
 
 export const SERVICE_INFO: Record<Exclude<Service, Service.None>, ServiceInfo> = {
@@ -271,6 +293,104 @@ export const SERVICE_INFO: Record<Exclude<Service, Service.None>, ServiceInfo> =
   [Service.Harbor]: {
     name: 'Port de commerce', category: 'transport', description: 'Quais et grues (3 × 2 cases) au bord de l’eau : exportations et stockage accrus.',
     cost: 40000, upkeep: 900, color: '#0369a1', budget: 'transport', unlockPop: 3000, footprint: [3, 2], nearWater: true, nuisance: 0.15,
+  },
+  [Service.Museum]: {
+    name: 'Musée', category: 'leisure', description: 'Collections et expositions : attire touristes et scolaires.',
+    cost: 14000, upkeep: 320, color: '#c084fc', budget: 'culture', unlockPop: 1500, coverage: Coverage.Leisure, radius: 14,
+    leisure: { capacity: 6000, ticket: 6, appeal: 0.06, kind: 'culture' },
+  },
+  [Service.Monument]: {
+    name: 'Monument historique', category: 'leisure', description: 'Place et monument emblématiques, gratuits : forte attractivité.',
+    cost: 20000, upkeep: 150, color: '#e9d5ff', budget: 'culture', unlockPop: 2500, coverage: Coverage.Leisure, radius: 10,
+    leisure: { capacity: 9000, ticket: 0, appeal: 0.08, kind: 'culture', events: ['market', 'seasonal'] },
+  },
+  [Service.Theater]: {
+    name: 'Théâtre', category: 'leisure', description: 'Spectacles vivants. Accueille des représentations.',
+    cost: 12000, upkeep: 280, color: '#f472b6', budget: 'culture', unlockPop: 1200, coverage: Coverage.Leisure, radius: 12,
+    leisure: { capacity: 3000, ticket: 15, appeal: 0.03, kind: 'culture', events: ['show'] },
+  },
+  [Service.Cinema]: {
+    name: 'Cinéma', category: 'leisure', description: 'Séances tous les jours : loisir de proximité très fréquenté.',
+    cost: 6000, upkeep: 120, color: '#fb7185', budget: 'culture', unlockPop: 600, coverage: Coverage.Leisure, radius: 10,
+    leisure: { capacity: 5000, ticket: 9, appeal: 0.01, kind: 'culture' },
+  },
+  [Service.ConcertHall]: {
+    name: 'Salle de concert', category: 'leisure', description: 'Concerts et spectacles musicaux.',
+    cost: 16000, upkeep: 300, color: '#a855f7', budget: 'culture', unlockPop: 2500, coverage: Coverage.Leisure, radius: 12,
+    leisure: { capacity: 4000, ticket: 25, appeal: 0.04, kind: 'culture', events: ['concert', 'show'] },
+  },
+  [Service.CongressCenter]: {
+    name: 'Centre de congrès', category: 'leisure', description: 'Salons et congrès professionnels (2 × 2 cases) : tourisme d’affaires.',
+    cost: 30000, upkeep: 500, color: '#818cf8', budget: 'culture', unlockPop: 4000, coverage: Coverage.Leisure, radius: 8,
+    leisure: { capacity: 5000, ticket: 20, appeal: 0.05, kind: 'tourism', events: ['fair'] },
+    footprint: [2, 2],
+  },
+  [Service.Stadium]: {
+    name: 'Stade', category: 'leisure', description: 'Grand stade de 30 000 places (3 × 3 cases) : matchs, concerts, compétitions. Gros pics de circulation.',
+    cost: 60000, upkeep: 900, color: '#22d3ee', budget: 'culture', unlockPop: 5000, coverage: Coverage.Leisure, radius: 16,
+    leisure: { capacity: 30000, ticket: 20, appeal: 0.06, kind: 'sport', events: ['match', 'concert', 'competition', 'festival'] },
+    footprint: [3, 3], nuisance: 0.08,
+  },
+  [Service.Arena]: {
+    name: 'Arena', category: 'leisure', description: 'Salle omnisport de 10 000 places (2 × 2 cases) : matchs et concerts.',
+    cost: 35000, upkeep: 600, color: '#06b6d4', budget: 'culture', unlockPop: 3000, coverage: Coverage.Leisure, radius: 12,
+    leisure: { capacity: 10000, ticket: 18, appeal: 0.04, kind: 'sport', events: ['match', 'concert', 'competition'] },
+    footprint: [2, 2],
+  },
+  [Service.Gym]: {
+    name: 'Gymnase', category: 'leisure', description: 'Sports en salle pour les habitants du quartier.',
+    cost: 4000, upkeep: 90, color: '#67e8f9', budget: 'culture', unlockPop: 300, coverage: Coverage.Leisure, radius: 8,
+    leisure: { capacity: 2000, ticket: 4, appeal: 0, kind: 'sport' },
+  },
+  [Service.Pool]: {
+    name: 'Piscine', category: 'leisure', description: 'Piscine municipale : très appréciée l’été.',
+    cost: 7000, upkeep: 160, color: '#38bdf8', budget: 'culture', unlockPop: 600, coverage: Coverage.Leisure, radius: 10,
+    leisure: { capacity: 3000, ticket: 4, appeal: 0.01, kind: 'sport', events: ['competition'] },
+  },
+  [Service.SportsField]: {
+    name: 'Terrain de sport', category: 'leisure', description: 'Terrain extérieur gratuit : football, basket.',
+    cost: 1500, upkeep: 30, color: '#4ade80', budget: 'culture', unlockPop: 0, coverage: Coverage.Leisure, radius: 6,
+    leisure: { capacity: 1500, ticket: 0, appeal: 0, kind: 'sport' },
+  },
+  [Service.IceRink]: {
+    name: 'Patinoire', category: 'leisure', description: 'Patinoire couverte : très fréquentée l’hiver.',
+    cost: 9000, upkeep: 220, color: '#bae6fd', budget: 'culture', unlockPop: 1500, coverage: Coverage.Leisure, radius: 10,
+    leisure: { capacity: 2000, ticket: 6, appeal: 0.01, kind: 'sport', events: ['competition'] },
+  },
+  [Service.Zoo]: {
+    name: 'Zoo', category: 'leisure', description: 'Parc animalier (3 × 2 cases) : grande attraction familiale.',
+    cost: 40000, upkeep: 700, color: '#a3e635', budget: 'culture', unlockPop: 3000, coverage: Coverage.Leisure, radius: 14,
+    leisure: { capacity: 15000, ticket: 14, appeal: 0.08, kind: 'nature' },
+    footprint: [3, 2],
+  },
+  [Service.Aquarium]: {
+    name: 'Aquarium', category: 'leisure', description: 'Au bord de l’eau : attraction touristique.',
+    cost: 22000, upkeep: 380, color: '#2dd4bf', budget: 'culture', unlockPop: 2500, coverage: Coverage.Leisure, radius: 12,
+    leisure: { capacity: 8000, ticket: 15, appeal: 0.06, kind: 'nature' },
+    nearWater: true,
+  },
+  [Service.Beach]: {
+    name: 'Plage aménagée', category: 'leisure', description: 'Au bord de l’eau : baignade, festivals d’été. Fréquentation selon la saison.',
+    cost: 3000, upkeep: 80, color: '#fde68a', budget: 'culture', unlockPop: 0, coverage: Coverage.Leisure, radius: 10,
+    leisure: { capacity: 20000, ticket: 0, appeal: 0.07, kind: 'nature', events: ['festival', 'seasonal'] },
+    nearWater: true,
+  },
+  [Service.Promenade]: {
+    name: 'Promenade et quais', category: 'leisure', description: 'Au bord de l’eau : marchés et balades.',
+    cost: 2500, upkeep: 40, color: '#fcd34d', budget: 'culture', unlockPop: 0, coverage: Coverage.Leisure, radius: 8,
+    leisure: { capacity: 6000, ticket: 0, appeal: 0.03, kind: 'nature', events: ['market', 'festival'] },
+    nearWater: true,
+  },
+  [Service.AmusementPark]: {
+    name: 'Parc d’attractions', category: 'leisure', description: 'Manèges et spectacles (3 × 3 cases) : attraction majeure, bruyante.',
+    cost: 80000, upkeep: 1200, color: '#f97316', budget: 'culture', unlockPop: 6000, coverage: Coverage.Leisure, radius: 16,
+    leisure: { capacity: 25000, ticket: 22, appeal: 0.1, kind: 'nature' },
+    footprint: [3, 3], nuisance: 0.1,
+  },
+  [Service.TouristInfo]: {
+    name: 'Office de tourisme', category: 'leisure', description: 'Point d’information : +10 % de touristes, meilleure répartition des visiteurs.',
+    cost: 3500, upkeep: 90, color: '#fbbf24', budget: 'culture', unlockPop: 800, coverage: Coverage.Leisure, radius: 12,
+    leisure: { capacity: 0, ticket: 0, appeal: 0.03, kind: 'tourism' },
   },
 };
 

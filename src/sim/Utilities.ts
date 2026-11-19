@@ -536,7 +536,7 @@ export class Utilities {
     const servedCount = [0, 0, 0, 0];
     let buildings = 0, happySum = 0, happyWeight = 0, lowPressure = 0;
     const covCount: Record<number, number> = {};
-    for (const c of [Coverage.Health, Coverage.Education, Coverage.Police, Coverage.Fire, Coverage.Park]) covCount[c] = 0;
+    for (const c of [Coverage.Health, Coverage.Education, Coverage.Police, Coverage.Fire, Coverage.Park, Coverage.Leisure]) covCount[c] = 0;
     this.lowPressure.fill(0);
     for (let idx = 0; idx < N; idx++) {
       this.served[idx] = 0;
@@ -577,6 +577,7 @@ export class Utilities {
       if (cov & Coverage.Police) h += 0.06;
       if (cov & Coverage.Fire) h += 0.04;
       if (cov & Coverage.Park) h += 0.07;
+      if (cov & Coverage.Leisure) h += 0.05;
       h -= this.nuisance[idx];
       h -= Math.min(0.35, this.air[idx] * 0.45 + this.noise[idx] * 0.25);
       h -= this.crime[idx] * 0.18;

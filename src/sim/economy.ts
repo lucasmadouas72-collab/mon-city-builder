@@ -6,7 +6,7 @@ export const DEFAULT_TAX = 9;
 export const MIN_TAX = 0;
 export const MAX_TAX = 29;
 
-export const BUDGET_KEYS: BudgetKey[] = ['utilities', 'health', 'education', 'police', 'fire', 'parks', 'transport', 'maintenance'];
+export const BUDGET_KEYS: BudgetKey[] = ['utilities', 'health', 'education', 'police', 'fire', 'parks', 'transport', 'maintenance', 'culture'];
 export const BUDGET_NAMES: Record<BudgetKey, string> = {
   utilities: 'Réseaux',
   health: 'Santé',
@@ -16,6 +16,7 @@ export const BUDGET_NAMES: Record<BudgetKey, string> = {
   parks: 'Parcs',
   transport: 'Transports',
   maintenance: 'Entretien du patrimoine',
+  culture: 'Culture, sport et loisirs',
 };
 
 export interface LoanOffer {

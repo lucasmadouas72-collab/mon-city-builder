@@ -19,6 +19,7 @@ import { NetworksPanel } from './NetworksPanel';
 import { DistrictPanel } from './DistrictPanel';
 import { CouncilPanel } from './CouncilPanel';
 import { TransportPanel } from './TransportPanel';
+import { EventsPanel } from './EventsPanel';
 import {
   COVERAGE_NAMES, COVERAGES, SERVICE_INFO, SERVICES, UTILITIES, UTILITY_COLORS, UTILITY_NAMES, UTILITY_SHORT, Utility, type Service,
 } from '../sim/services';
@@ -37,6 +38,7 @@ const ICONS: Record<string, string> = {
   stats: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   advisor: '<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.5 1 2.5h6c0-1 .3-1.8 1-2.5A6 6 0 0 0 12 3z"/>',
   bell: '<path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
+  leisure: '<path d="M4 20l4-12 4 12M6 15h4"/><circle cx="17" cy="8" r="3"/><path d="M17 11v9M14 16h6"/>',
   district: '<path d="M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3z"/><path d="M9 3v15M15 6v15" opacity=".6"/>',
   council: '<path d="M3 21h18M4 10h16M12 3l9 5H3z"/><path d="M6 10v8M10 10v8M14 10v8M18 10v8"/>',
   library: '<path d="M4 21V9l5-4v16M9 21V3l6 4v14M15 21v-9l5 3v6"/><path d="M2 21h20"/>',
@@ -64,7 +66,7 @@ const ZONE_TOOLS: ToolDef[] = [
   })),
   { id: 'dezone', label: 'Dézoner', key: '7', color: '#fb923c', sub: 'Retire la zone' },
 ];
-const svcTools = (cat: 'utilities' | 'services' | 'transport'): ToolDef[] =>
+const svcTools = (cat: 'utilities' | 'services' | 'transport' | 'leisure'): ToolDef[] =>
   SERVICES.filter((s) => SERVICE_INFO[s].category === cat).map((s) => ({
     id: `svc${s}` as ToolId, label: SERVICE_INFO[s].name, color: SERVICE_INFO[s].color,
     sub: `${fmt(SERVICE_INFO[s].cost)} · ${fmt(SERVICE_INFO[s].upkeep)}/mois`,
@@ -107,6 +109,7 @@ const GROUPS: Group[] = [
     { id: 'powerline', label: 'Ligne haute tension', color: '#9aa1a8', sub: '18 € / case', desc: 'Relie des réseaux électriques séparés, ou une centrale éloignée des routes. Passe au-dessus des routes, des champs et de l’eau.' }] },
   { id: 'services', label: 'Services', icon: 'services', tools: svcTools('services') },
   { id: 'transport', label: 'Transports', icon: 'transport', tools: TRANSPORT_TOOLS },
+  { id: 'leisure', label: 'Loisirs', icon: 'leisure', tools: svcTools('leisure') },
   { id: 'districts', label: 'Quartiers', icon: 'district', tools: [
     { id: 'district', label: 'Tracer un quartier', color: '#f472b6', sub: 'Glisser sur la carte', desc: 'Glissez pour créer un quartier ou agrandir le quartier choisi.' },
     { id: 'undistrict', label: 'Retirer du quartier', color: '#fb923c', sub: 'Glisser sur la carte' },
@@ -131,6 +134,7 @@ export class Hud {
   private openGroup: string | null = null;
   private districtPanel!: DistrictPanel;
   private transportPanel!: TransportPanel;
+  eventsPanel!: EventsPanel;
   private lastTool: ToolId | null = null;
   private budget!: BudgetPanel;
   private advisor!: AdvisorPanel;
@@ -226,6 +230,7 @@ export class Hud {
       if (b?.dataset.roadmode) { tools.setRoadMode(b.dataset.roadmode as RoadMode); this.renderFlyout(); return; }
       if (b?.dataset.structure) { tools.setStructure(b.dataset.structure as 'ground'); this.renderFlyout(); return; }
       if (b?.dataset.lines) { this.transportPanel.toggle(true); return; }
+      if (b?.dataset.events) { this.eventsPanel.toggle(true); return; }
       if (b?.dataset.lib) { this.libraryClick(b.dataset.lib, b.dataset.v!); return; }
       if (b?.dataset.tool) tools.setTool(b.dataset.tool as ToolId);
     });
@@ -246,6 +251,8 @@ export class Hud {
     this.stats = new StatsPanel(root, sim);
     const networks = new NetworksPanel(root, sim);
     this.transportPanel = new TransportPanel(root, sim);
+    this.eventsPanel = new EventsPanel(root, sim);
+    this.eventsPanel.focus = (t) => this.focusTile(t);
     const council = new CouncilPanel(root, sim);
     this.el('#council-btn').addEventListener('click', () => council.toggle());
     this.districtPanel = new DistrictPanel(root, sim, tools);
@@ -325,6 +332,7 @@ export class Hud {
     sim.events.on('notify', (n) => { this.toast(n.text, n.kind ?? 'info', n.tile); this.log(n.text, n.kind ?? 'info', n.tile); });
     const sheet = new BuildingSheet(root, sim, tools);
     tools.onSelect = (idx) => sheet.show(idx);
+    sheet.onEvent = (venue) => this.eventsPanel.toggle(true, venue);
     tools.onToolChange = (t) => this.updateTool(t);
     tools.onHover = (h) => this.updateInfo(h);
     tools.onTooltip = (t) => this.updateTooltip(t);
@@ -356,7 +364,8 @@ export class Hud {
       `<button data-roadmode="${m}" class="${this.tools.roadMode === m ? 'active' : ''}" title="Touche C pour changer">${ROAD_MODE_NAMES[m]}</button>`).join('')}</div>
       <div class="road-modes" role="group" aria-label="Ouvrage">${([['ground', 'Au sol'], ['tunnel', 'Tunnel ×4'], ['elevated', 'Viaduc ×3']] as const).map(([k, l]) =>
       `<button data-structure="${k}" class="${st === k ? 'active' : ''}" title="Tunnel : passe sous le relief et l’eau. Viaduc : sur piles. Ni l’un ni l’autre ne dessert les parcelles.">${l}</button>`).join('')}</div>`
-      : g.id === 'transport' ? '<div class="road-modes"><button data-lines="1">Gérer les lignes</button></div>' : '';
+      : g.id === 'transport' ? '<div class="road-modes"><button data-lines="1">Gérer les lignes</button></div>'
+      : g.id === 'leisure' ? '<div class="road-modes"><button data-events="1">Événements et tourisme</button></div>' : '';
     fly.innerHTML = `<div class="fly-title">${g.label}${modes}</div>` + g.tools.map((t) => {
       const locked = t.zone ? !this.sim.isUnlocked(t.zone) : t.unlock ? this.sim.maxPop < t.unlock : false;
       const unlockAt = t.zone ? ZONE_INFO[t.zone].unlockPop : t.unlock ?? 0;

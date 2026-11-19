@@ -275,6 +275,7 @@ export class Society {
     // Dépenses des ménages (après loyer)
     let spending = 0;
     for (let h = 0; h < c.hCount; h++) if (c.hAlive[h]) spending += Math.max(0, c.hIncome[h] - c.hRent[h]) * 0.6;
+    spending += sim.tourism.spending; // achats des touristes
     // Poids des commerces, production industrielle
     const jobs: number[] = [];
     let wC = 0, produced = 0, logistics = 0, researchers = 0, industrialStaff = 0;
@@ -357,7 +358,7 @@ export class Society {
       if (z === Zone.Tourism) {
         // Hôtels : dépenses des visiteurs selon l'attrait de la ville et du quartier
         const appeal = 0.4 + sim.tourismAppeal + lv * 0.5;
-        rev = c.employees[k] * 2600 * appeal;
+        rev = c.employees[k] * 2600 * appeal * sim.tourism.hotelFactor;
         goods = rev * 0.2;
       } else if (z === Zone.Logistics) {
         // Plateformes de fret : rémunérées par le volume de marchandises traité
@@ -439,7 +440,7 @@ export class Society {
       ['Éducation', clamp(cov(Coverage.Education)), `${ut.reach.unschooled} élève(s) sans place`],
       ['Mobilité', clamp(sim.traffic.flow * 0.7 + sim.traffic.transitShare * 2 + 0.15), `vitesse moyenne ${Math.round(sim.traffic.flow * 100)} %`],
       ['Consommation', clamp(Math.min(1, (st.jobs[Zone.Commercial] / pop) * 5) - (this.costOfLiving - 1) * 2), `coût de la vie ${Math.round(this.costOfLiving * 100)}`],
-      ['Loisirs', clamp(cov(Coverage.Park) * 0.8 + 0.1), `${Math.round(cov(Coverage.Park) * 100)} % près d'un parc`],
+      ['Loisirs', clamp(cov(Coverage.Park) * 0.5 + cov(Coverage.Leisure) * 0.5 + 0.1), `${Math.round(cov(Coverage.Park) * 100)} % près d'un parc · ${Math.round(cov(Coverage.Leisure) * 100)} % près d'un équipement de loisirs`],
       ['Sécurité', clamp(1 - sim.crimeIndex * 1.5), `délinquance ${Math.round(sim.crimeIndex * 100)} %`],
       ['Environnement', clamp(1 - us.air * 1.5 - us.noise - (bld ? contaminated / bld : 0)), `air ${Math.round(us.air * 100)} % · bruit ${Math.round(us.noise * 100)} %`],
     ];

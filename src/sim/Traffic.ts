@@ -138,6 +138,8 @@ export class Traffic {
   private depots = emptyList();
   /** Flux de marchandises du mois (fournis par l'économie) : part des camions et poids de chaque trajet. */
   freight = { share: 0.12, raw: 0, goods: 1, food: 0, imports: 0 };
+  /** Lieu d'un événement qui attire une part des trajets (case de route, poids). */
+  attractor: { tile: number; weight: number } | null = null;
   private occupants = new Map<number, Map<number, number>>(); // carrefour → (id véhicule → direction d'entrée)
   private buckets = new Map<number, Vehicle[]>();
   private spawnBudget = 0;
@@ -277,6 +279,7 @@ export class Traffic {
     } else {
       from = this.pickWeighted(this.homes);
       to = this.pickWeighted(r < 0.4 && this.shops.total ? this.shops : this.jobs);
+      if (this.attractor && this.attractor.tile >= 0 && this.rand() < this.attractor.weight) to = this.attractor.tile;
       // Une partie des trajets se fait dans l'autre sens (retour au domicile)
       if (this.rand() < 0.45) [from, to] = [to, from];
     }

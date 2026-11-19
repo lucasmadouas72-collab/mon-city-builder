@@ -5,6 +5,7 @@ import { BuildState, FLOORS, LEVEL_NAMES, STYLE_NAMES, ZONE_INFO, hasHomes, hasJ
 import { SERVICE_INFO, UTILITIES, UTILITY_NAMES, Utility, type Service } from '../sim/services';
 import { citizenName, companyName } from '../sim/names';
 import { STATUS_NAMES } from '../sim/Citizens';
+import { venueEvents } from '../sim/Tourism';
 
 /** Mètres par case (pour l'emprise affichée). */
 const TILE_M = 16;
@@ -17,6 +18,8 @@ const level3 = (v: number) => (v < 0.15 ? 'faible' : v < 0.4 ? 'moyen' : 'fort')
 export class BuildingSheet {
   private el: HTMLElement;
   private timer = 0;
+  /** Ouvre l'organisation d'un événement sur ce lieu (fourni par l'interface). */
+  onEvent?: (venue: number) => void;
 
   constructor(root: HTMLElement, private sim: Simulation, private tools: ToolManager) {
     this.el = document.createElement('aside');
@@ -33,6 +36,7 @@ export class BuildingSheet {
       if (act === 'rotate') { this.sim.rotateBuilding(sel); this.render(); }
       if (act === 'move') this.tools.startMove(sel);
       if (act === 'renovate') { this.sim.renovate([sel]); this.render(); }
+      if (act === 'event') this.onEvent?.(sel);
       if (act === 'delete') this.tools.deleteSelected();
     });
     sim.events.on('buildingsChanged', () => { if (!this.el.hidden) this.render(); });
@@ -74,7 +78,13 @@ export class BuildingSheet {
         <dt>État d’entretien</dt><dd class="${w.condition[idx] < 50 ? 'bad' : ''}">${Math.round(w.condition[idx])} %${w.condition[idx] < 50 ? ' (rendement réduit)' : ''}${sim.disasters.offline.has(idx) ? ' · en panne' : ''}</dd>
         ${w.district[idx] ? `<dt>Quartier</dt><dd>${sim.districts.nameAt(idx)}</dd>` : ''}
       </dl></section>
-      <div class="actions"><button data-act="renovate" ${w.condition[idx] < 99 ? '' : 'disabled'}>Rénover · ${fmt(sim.renovationCost(idx))}</button><button data-act="move">Déplacer (${fmt(info.cost * 0.2)})</button><button data-act="delete" class="danger">Démolir</button></div>`;
+      ${info.leisure ? (() => { const f = sim.tourism.facilities.find((x) => x.tile === idx); return `<section><b>Fréquentation</b><dl>
+        <dt>Visiteurs (mois dernier)</dt><dd>${(f?.visitors ?? 0).toLocaleString('fr-FR')} / ${info.leisure.capacity.toLocaleString('fr-FR')}</dd>
+        <dt>Entrée</dt><dd>${info.leisure.ticket ? fmt(info.leisure.ticket) : 'gratuite'}</dd>
+        <dt>Recettes (ville)</dt><dd>${fmt(f?.revenue ?? 0)} / mois</dd>
+        <dt>Attrait touristique</dt><dd>+${Math.round(info.leisure.appeal * 100)} %</dd>
+        <dt>Saison</dt><dd>affluence ×${sim.tourism.seasonFactor(svc).toFixed(1)}</dd></dl></section>`; })() : ''}
+      <div class="actions">${venueEvents(svc).length ? '<button data-act="event" class="primary">Organiser un événement</button>' : ''}<button data-act="renovate" ${w.condition[idx] < 99 ? '' : 'disabled'}>Rénover · ${fmt(sim.renovationCost(idx))}</button><button data-act="move">Déplacer (${fmt(info.cost * 0.2)})</button><button data-act="delete" class="danger">Démolir</button></div>`;
   }
 
   private buildingHtml(a: number): string {

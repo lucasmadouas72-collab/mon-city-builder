@@ -13,6 +13,7 @@ import { Society } from './Society';
 import { Waste } from './Waste';
 import { Districts } from './Districts';
 import { Council } from './Council';
+import { Tourism } from './Tourism';
 import { Status } from './Citizens';
 import { Demographics } from './Population';
 import { DIFFICULTY, defaultConfig, type GameConfig } from '../game/config';
@@ -139,6 +140,7 @@ export class Simulation {
   readonly waste: Waste;
   readonly districts: Districts;
   readonly council: Council;
+  readonly tourism: Tourism;
   /** Investissements du mois en cours, par poste (§9). */
   investMonth: Record<string, number> = {};
   /** Historique mensuel des comptes (recettes, fonctionnement, investissements, dette). */
@@ -183,10 +185,11 @@ export class Simulation {
     this.waste = new Waste(this);
     this.districts = new Districts(this);
     this.council = new Council(this);
+    this.tourism = new Tourism(this);
     // Effets des projets du conseil sur l'efficacité des services
     this.utilities.budget = (k) => (this.budgets[k] / 100) * (1 + (k === 'education' ? this.council.mod('education') : k === 'health' ? this.council.mod('health') : 0));
     this.utilities.districtHappiness = (idx) => this.districts.happiness(idx);
-    this.utilities.afterPollution = (air, noise, light) => this.districts.applyToPollution(air, noise, light);
+    this.utilities.afterPollution = (air, noise, light) => { this.districts.applyToPollution(air, noise, light); this.tourism.applyNoise(noise); };
     this.utilities.garbageOk = (idx) => this.waste.isCollected(idx);
     this.utilities.garbageLevel = (idx) => this.waste.level(idx);
     // Les missions des camions de collecte et celles des secours partagent le trafic
@@ -457,6 +460,7 @@ export class Simulation {
     this.waste.daily();
     this.maintainDaily();
     this.trafficIncidents();
+    this.tourism.daily();
     this.society.citizens.tally();
     if (this.dayCount % 10 === 0) this.computeCrime();
 
@@ -876,6 +880,7 @@ export class Simulation {
     if (cov & Coverage.Police) v += 0.05;
     if (cov & Coverage.Fire) v += 0.03;
     if (cov & Coverage.Park) v += 0.09;
+    if (cov & Coverage.Leisure) v += 0.05;
     v -= this.utilities.nuisance[idx];
     v -= this.utilities.air[idx] * 0.4 + this.utilities.noise[idx] * 0.2 + this.world.soilPol[idx] * 0.3;
     v += this.council.mod('landValue');
@@ -1125,6 +1130,7 @@ export class Simulation {
     // Aéroport : redevances selon les voyageurs (habitants, affaires, touristes)
     this.airportPassengers = airports ? Math.round(population * 0.4 + this.tourismAppeal * 6000) * airports : 0;
     incomeBy.airport = this.airportPassengers * 1.5;
+    incomeBy.leisure = this.tourism.lastIncome;
     // Ventes aux villes voisines et revente des matériaux recyclés
     const ps = this.utilities.stats.power, ws = this.utilities.stats.water;
     incomeBy.energy = ps.exported * POWER_EXPORT_PRICE;
@@ -1156,8 +1162,9 @@ export class Simulation {
     expensesBy.maintenance = (this.roadCount * 1.2 + svcUpkeep * 0.12) * (this.budgets.maintenance / 100);
     const pol = this.districts.budget();
     expensesBy.policies = pol.cost;
+    expensesBy.events = this.tourism.lastCost;
     incomeBy.fees = pol.income;
-    for (const k in incomeBy) incomeBy[k] = Math.round(incomeBy[k] * (['tickets', 'energy', 'recycling', 'fees', 'taxi', 'airport'].includes(k) ? 1 : this.incomeMul));
+    for (const k in incomeBy) incomeBy[k] = Math.round(incomeBy[k] * (['tickets', 'energy', 'recycling', 'fees', 'taxi', 'airport', 'leisure'].includes(k) ? 1 : this.incomeMul));
     for (const k in expensesBy) expensesBy[k] = Math.round(expensesBy[k]);
     const income = Object.values(incomeBy).reduce((a, b) => a + b, 0);
     const expenses = Object.values(expensesBy).reduce((a, b) => a + b, 0);
@@ -1187,6 +1194,7 @@ export class Simulation {
     this.accidentsThisMonth = 0;
     const us = this.utilities.stats;
     void us;
+    this.tourism.monthly();
     this.society.monthly();
     this.waste.monthly();
     this.council.monthly();
@@ -1443,7 +1451,7 @@ export class Simulation {
     const j = (z: Zone) => jobsOf[z] ?? 0;
     const happy = population ? us.happiness : 0.6;
     // Attrait touristique : parcs, eau, bonheur, sécurité
-    this.tourismAppeal = clamp(this.council.mod('tourism') + this.transportAppeal() + (us.coverage[Coverage.Park] ?? 0) * 0.5 + (happy - 0.4) * 0.8 + (1 - this.crimeIndex) * 0.2 + Math.min(0.2, population / 20000), 0, 1);
+    this.tourismAppeal = clamp(this.council.mod('tourism') + this.transportAppeal() + this.tourism.attraction() * 0.3 + (us.coverage[Coverage.Park] ?? 0) * 0.5 + (happy - 0.4) * 0.8 + (1 - this.crimeIndex) * 0.2 + Math.min(0.2, population / 20000), 0, 1);
     const bs = soc.stats;
     const d: Record<number, number> = {};
     d[Zone.ResidentialLow] = demand[Zone.Residential] + 0.05;

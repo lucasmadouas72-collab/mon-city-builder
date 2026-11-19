@@ -385,6 +385,202 @@ function harbor(): THREE.BufferGeometry {
   return b.build();
 }
 
+// ---------- Culture, sport, loisirs (§15) ----------
+
+function columns(b: Builder, x0: number, x1: number, z: number, y0: number, h: number, count: number, color: string): void {
+  for (let k = 0; k < count; k++) b.cyl(0.025, h, x0 + (k / (count - 1)) * (x1 - x0), y0, z, color, 8);
+}
+
+function museum(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#d6d0c4');
+  b.box(0.74, 0.06, 0.56, 0, 0.03, -0.06, '#e7e1d4'); // soubassement
+  b.box(0.66, 0.3, 0.42, 0, 0.09, -0.12, '#f3efe6');
+  columns(b, -0.3, 0.3, 0.13, 0.09, 0.28, 6, '#ffffff');
+  b.gable(0.74, 0.12, 0.56, 0, 0.39, -0.06, '#d9d2c3');
+  b.box(0.3, 0.02, 0.12, 0, 0.03, 0.32, '#cfc8ba'); // escalier
+  return b.build();
+}
+
+function monument(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#d9cdb3');
+  b.cyl(0.38, 0.02, 0, 0.03, 0, '#cbbd9f', 20);
+  b.box(0.24, 0.12, 0.24, 0, 0.05, 0, '#b8ab90');
+  b.add(new THREE.CylinderGeometry(0.03, 0.08, 0.9, 4).rotateY(Math.PI / 4), '#e9e2d0', 0, 0.62, 0); // obélisque
+  b.add(new THREE.ConeGeometry(0.035, 0.08, 4).rotateY(Math.PI / 4), '#d4af37', 0, 1.11, 0);
+  for (const [x, z] of [[-0.3, -0.3], [0.3, -0.3], [-0.3, 0.3], [0.3, 0.3]]) b.tree(x, z, 0.8);
+  return b.build();
+}
+
+function theater(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#cfc8ba');
+  b.box(0.72, 0.36, 0.5, 0, 0.03, -0.1, '#b4413c');
+  b.box(0.74, 0.06, 0.52, 0, 0.39, -0.1, '#e8d8b0');
+  b.add(new THREE.SphereGeometry(0.16, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), '#2f6d6a', 0, 0.45, -0.15); // coupole
+  b.box(0.5, 0.18, 0.02, 0, 0.06, 0.16, '#f5d77a'); // marquise lumineuse
+  b.box(0.6, 0.02, 0.14, 0, 0.25, 0.22, '#e8d8b0');
+  return b.build();
+}
+
+function cinema(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#9ca3af');
+  b.box(0.78, 0.32, 0.56, 0, 0.03, -0.1, '#374151');
+  b.box(0.6, 0.12, 0.02, 0, 0.22, 0.19, '#fde047'); // enseigne
+  for (let k = 0; k < 4; k++) b.box(0.1, 0.14, 0.01, -0.24 + k * 0.16, 0.36, 0.181, ['#ef4444', '#3b82f6', '#22c55e', '#f97316'][k]); // affiches
+  b.box(0.5, 0.14, 0.01, 0, 0.05, 0.181, '#9cc3dd');
+  return b.build();
+}
+
+function concertHall(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#cbd5e1');
+  b.add(new THREE.CylinderGeometry(0.36, 0.42, 0.34, 18), '#e2e8f0', 0, 0.2, -0.05);
+  b.add(new THREE.SphereGeometry(0.36, 18, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.45, 1), '#94a3b8', 0, 0.37, -0.05);
+  b.box(0.5, 0.16, 0.06, 0, 0.03, 0.36, '#7c3aed');
+  return b.build();
+}
+
+function congressCenter(): THREE.BufferGeometry {
+  const b = new Builder();
+  b.box(1.9, 1.2, 1.9, 0, -1.2, 0, '#b3a994');
+  b.box(1.96, 0.03, 1.96, 0, 0, 0, '#c9c4b8');
+  b.box(1.5, 0.34, 1.1, 0, 0.03, -0.25, '#e2e8f0');
+  b.box(1.52, 0.2, 1.12, 0, 0.12, -0.25, '#7fb3d5');
+  b.add(new THREE.BoxGeometry(1.7, 0.03, 1.3).rotateX(0.06), '#64748b', 0, 0.4, -0.25); // toit en porte-à-faux
+  b.box(0.8, 0.02, 0.5, 0, 0.03, 0.65, '#d6d3cc'); // parvis
+  for (let k = 0; k < 4; k++) b.box(0.03, 0.4, 0.03, -0.6 + k * 0.4, 0.03, 0.62, '#94a3b8'); // mâts
+  for (let k = 0; k < 4; k++) b.box(0.12, 0.08, 0.005, -0.54 + k * 0.4, 0.33, 0.62, ['#ef4444', '#3b82f6', '#22c55e', '#facc15'][k]);
+  return b.build();
+}
+
+function stadium(): THREE.BufferGeometry {
+  const b = new Builder();
+  b.box(2.9, 1.2, 2.9, 0, -1.2, 0, '#b3a994');
+  b.box(2.96, 0.03, 2.96, 0, 0, 0, '#9ca3af');
+  // Tribunes en anneau (ellipse)
+  const pts: THREE.Vector2[] = [new THREE.Vector2(0.95, 0), new THREE.Vector2(1.3, 0), new THREE.Vector2(1.3, 0.5), new THREE.Vector2(1.05, 0.42)];
+  b.add(new THREE.LatheGeometry(pts, 32).scale(1, 1, 0.8), '#e5e7eb', 0, 0.03, 0);
+  b.add(new THREE.LatheGeometry([new THREE.Vector2(0.97, 0.05), new THREE.Vector2(1.27, 0.45)], 32).scale(1, 1, 0.8), '#0891b2', 0, 0.03, 0);
+  b.add(new THREE.CylinderGeometry(0.95, 0.95, 0.02, 32).scale(1, 1, 0.8), '#4ade80', 0, 0.04, 0); // pelouse
+  b.box(1.0, 0.004, 0.012, 0, 0.055, 0, '#f8fafc');
+  b.add(new THREE.TorusGeometry(0.5, 0.005, 4, 24).rotateX(Math.PI / 2).scale(1, 1, 0.8), '#f8fafc', 0, 0.055, 0);
+  for (const [x, z] of [[-1.25, -1], [1.25, -1], [-1.25, 1], [1.25, 1]]) { b.box(0.04, 0.9, 0.04, x, 0.03, z, '#9ca3af'); b.box(0.2, 0.08, 0.04, x, 0.92, z, '#f8fafc'); } // projecteurs
+  return b.build();
+}
+
+function arena(): THREE.BufferGeometry {
+  const b = new Builder();
+  b.box(1.9, 1.2, 1.9, 0, -1.2, 0, '#b3a994');
+  b.box(1.96, 0.03, 1.96, 0, 0, 0, '#9ca3af');
+  b.add(new THREE.CylinderGeometry(0.85, 0.9, 0.38, 24), '#cbd5e1', 0, 0.22, 0);
+  b.add(new THREE.CylinderGeometry(0.87, 0.87, 0.12, 24), '#0e7490', 0, 0.28, 0);
+  b.add(new THREE.SphereGeometry(0.85, 24, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.25, 1), '#e2e8f0', 0, 0.41, 0);
+  return b.build();
+}
+
+function gym(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#c9c4b8');
+  b.box(0.72, 0.28, 0.5, 0, 0.03, -0.1, '#e5e7eb');
+  b.add(new THREE.CylinderGeometry(0.25, 0.25, 0.72, 10, 1, false, 0, Math.PI).rotateZ(Math.PI / 2).scale(1, 0.3, 1), '#06b6d4', 0, 0.31, -0.1);
+  b.box(0.3, 0.1, 0.01, 0, 0.12, 0.155, '#9cc3dd');
+  return b.build();
+}
+
+function pool(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#e2e8f0');
+  b.box(0.4, 0.2, 0.3, -0.25, 0.03, -0.25, '#f8fafc');
+  b.box(0.7, 0.015, 0.36, 0.05, 0.03, 0.15, '#38bdf8'); // bassin
+  for (let k = 1; k < 5; k++) b.box(0.7, 0.004, 0.008, 0.05, 0.047, 0.15 - 0.18 + k * 0.072, '#f8fafc');
+  b.add(new THREE.ConeGeometry(0.07, 0.1, 8), '#f97316', 0.35, 0.08, -0.25); // parasol
+  return b.build();
+}
+
+function sportsField(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#4ade80');
+  b.box(0.86, 0.006, 0.6, 0, 0.03, 0, '#22a35a');
+  b.box(0.86, 0.004, 0.01, 0, 0.037, 0, '#f8fafc');
+  b.box(0.01, 0.004, 0.6, 0, 0.037, 0, '#f8fafc');
+  for (const x of [-0.42, 0.42]) { b.box(0.01, 0.06, 0.16, x, 0.03, 0, '#f8fafc'); b.box(0.01, 0.01, 0.16, x, 0.09, 0, '#f8fafc'); }
+  return b.build();
+}
+
+function iceRink(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#c9c4b8');
+  b.box(0.76, 0.26, 0.6, 0, 0.03, -0.05, '#dbeafe');
+  b.add(new THREE.CylinderGeometry(0.3, 0.3, 0.76, 12, 1, false, 0, Math.PI).rotateZ(Math.PI / 2).scale(1, 0.35, 1), '#bae6fd', 0, 0.29, -0.05);
+  b.box(0.2, 0.1, 0.01, 0, 0.1, 0.255, '#1d4ed8');
+  return b.build();
+}
+
+function zoo(): THREE.BufferGeometry {
+  const b = new Builder();
+  b.box(2.9, 1.2, 1.9, 0, -1.2, 0, '#b3a994');
+  b.box(2.96, 0.03, 1.96, 0, 0, 0, '#7fae5a');
+  b.add(new THREE.CylinderGeometry(0.35, 0.35, 0.012, 16).scale(1.4, 1, 1), '#38bdf8', -0.8, 0.03, -0.4); // bassin
+  for (let k = 0; k < 14; k++) b.tree(-1.3 + (k % 7) * 0.42, k < 7 ? -0.8 : 0.7, 0.9 + (k % 3) * 0.2, k % 2 ? '#3f7d3a' : '#5a9e40');
+  b.box(0.6, 0.02, 0.8, 0.7, 0.03, -0.1, '#c9a96e'); // savane
+  for (let k = 0; k < 3; k++) { b.box(0.06, 0.05, 0.12, 0.55 + k * 0.15, 0.05, -0.2 + k * 0.1, '#e0b25a'); b.box(0.015, 0.12, 0.015, 0.55 + k * 0.15, 0.08, -0.25 + k * 0.1, '#e0b25a'); } // girafes
+  b.box(0.5, 0.18, 0.3, 0, 0.03, 0.75, '#8b6a4a'); // entrée
+  b.gable(0.56, 0.1, 0.34, 0, 0.21, 0.75, '#3f6f3a');
+  return b.build();
+}
+
+function aquarium(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#cbd5e1');
+  b.box(0.7, 0.26, 0.5, 0, 0.03, -0.1, '#e0f2fe');
+  b.box(0.72, 0.16, 0.52, 0, 0.08, -0.1, '#0ea5e9');
+  b.add(new THREE.SphereGeometry(0.2, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), '#7dd3fc', 0.15, 0.29, -0.1);
+  b.add(new THREE.ConeGeometry(0.06, 0.16, 3).rotateZ(Math.PI / 2), '#f97316', -0.2, 0.36, -0.1); // poisson
+  return b.build();
+}
+
+function beach(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#f5e3a3');
+  const colors = ['#ef4444', '#3b82f6', '#facc15', '#22c55e', '#ec4899'];
+  for (let k = 0; k < 6; k++) {
+    const x = -0.32 + (k % 3) * 0.32, z = -0.2 + Math.floor(k / 3) * 0.35;
+    b.cyl(0.006, 0.12, x, 0.03, z, '#6b7280', 4);
+    b.add(new THREE.ConeGeometry(0.09, 0.05, 8), colors[k % 5], x, 0.16, z);
+    b.box(0.07, 0.006, 0.12, x + 0.07, 0.035, z, colors[(k + 2) % 5]);
+  }
+  b.box(0.14, 0.12, 0.1, 0.35, 0.03, 0.38, '#f8fafc'); // poste de secours
+  return b.build();
+}
+
+function promenade(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#e8dcc0');
+  b.box(0.96, 0.02, 0.4, 0, 0.03, 0.2, '#c9a87a'); // planches
+  for (let k = 0; k < 5; k++) { b.cyl(0.008, 0.2, -0.4 + k * 0.2, 0.03, 0.35, '#374151', 6); b.add(new THREE.SphereGeometry(0.02, 6, 4), '#fde68a', -0.4 + k * 0.2, 0.24, 0.35); } // lampadaires
+  for (let k = 0; k < 3; k++) b.box(0.14, 0.03, 0.04, -0.3 + k * 0.3, 0.05, 0.1, '#7c5a3a'); // bancs
+  for (let k = 0; k < 3; k++) b.tree(-0.35 + k * 0.35, -0.25, 1);
+  return b.build();
+}
+
+function amusementPark(): THREE.BufferGeometry {
+  const b = new Builder();
+  b.box(2.9, 1.2, 2.9, 0, -1.2, 0, '#b3a994');
+  b.box(2.96, 0.03, 2.96, 0, 0, 0, '#a3c47a');
+  // Grande roue
+  b.add(new THREE.TorusGeometry(0.55, 0.02, 6, 28), '#f8fafc', -0.7, 0.8, -0.8);
+  for (let k = 0; k < 12; k++) { const a = (k / 12) * Math.PI * 2; b.box(0.08, 0.06, 0.06, -0.7 + Math.cos(a) * 0.55, 0.8 + Math.sin(a) * 0.55, -0.8, ['#ef4444', '#3b82f6', '#facc15', '#22c55e'][k % 4]); }
+  b.box(0.04, 0.8, 0.04, -0.85, 0.03, -0.8, '#9ca3af'); b.box(0.04, 0.8, 0.04, -0.55, 0.03, -0.8, '#9ca3af');
+  // Montagnes russes
+  for (let k = 0; k < 10; k++) { const x = 0.1 + k * 0.12, h = 0.2 + Math.abs(Math.sin(k * 0.8)) * 0.4; b.box(0.02, h, 0.02, x, 0.03, 0.2, '#e5e7eb'); b.box(0.13, 0.02, 0.06, x, 0.03 + h, 0.2, '#dc2626'); }
+  // Carrousel et chapiteau
+  b.cyl(0.25, 0.1, -0.6, 0.03, 0.6, '#fbbf24', 16); b.add(new THREE.ConeGeometry(0.28, 0.2, 16), '#ef4444', -0.6, 0.23, 0.6);
+  b.add(new THREE.ConeGeometry(0.4, 0.35, 12), '#7c3aed', 0.7, 0.2, -0.8);
+  b.box(0.6, 0.16, 0.2, 0.2, 0.03, 1.25, '#f97316'); // entrée
+  return b.build();
+}
+
+function touristInfo(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#d6d0c4');
+  b.box(0.4, 0.2, 0.3, -0.1, 0.03, -0.1, '#f8fafc');
+  b.box(0.42, 0.04, 0.32, -0.1, 0.23, -0.1, '#f59e0b');
+  b.box(0.06, 0.3, 0.06, 0.3, 0.03, 0.25, '#f59e0b');
+  b.box(0.16, 0.16, 0.02, 0.3, 0.3, 0.25, '#2563eb');
+  b.box(0.03, 0.1, 0.025, 0.3, 0.33, 0.255, '#f8fafc'); // « i »
+  return b.build();
+}
+
 export function createServiceModels(): Map<Service, THREE.BufferGeometry> {
   return new Map<Service, THREE.BufferGeometry>([
     [Service.PowerPlant, powerPlant()],
@@ -421,5 +617,23 @@ export function createServiceModels(): Map<Service, THREE.BufferGeometry> {
     [Service.Parking, parking()],
     [Service.Airport, airport()],
     [Service.Harbor, harbor()],
+    [Service.Museum, museum()],
+    [Service.Monument, monument()],
+    [Service.Theater, theater()],
+    [Service.Cinema, cinema()],
+    [Service.ConcertHall, concertHall()],
+    [Service.CongressCenter, congressCenter()],
+    [Service.Stadium, stadium()],
+    [Service.Arena, arena()],
+    [Service.Gym, gym()],
+    [Service.Pool, pool()],
+    [Service.SportsField, sportsField()],
+    [Service.IceRink, iceRink()],
+    [Service.Zoo, zoo()],
+    [Service.Aquarium, aquarium()],
+    [Service.Beach, beach()],
+    [Service.Promenade, promenade()],
+    [Service.AmusementPark, amusementPark()],
+    [Service.TouristInfo, touristInfo()],
   ]);
 }

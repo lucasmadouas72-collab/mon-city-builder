@@ -113,6 +113,13 @@ export function diagnose(sim: Simulation): Issue[] {
   for (let k = 0; k < sim.parkingPressure.length; k++) if (sim.parkingPressure[k] > 1.3) parkingBad++;
   if (parkingBad > 8) out.push({ id: 'parking', severity: 'warning', title: `Stationnement saturé autour de ${parkingBad} commerces ou bureaux`, causes: ['Pas assez de places sur voirie pour les employés et les clients : les ventes baissent.'], actions: ['Construire des parkings (menu Transports).', 'Développer les transports en commun et le vélo.'], view: 'parking' });
 
+  // ----- Loisirs et événements (§15) -----
+  const leis = us.coverage[Coverage.Leisure] ?? 0;
+  if (st.population > 1500 && leis < 0.3) out.push({ id: 'leisure', severity: 'warning', title: `Peu d’équipements de loisirs (${pct(leis)} des bâtiments à proximité)`, causes: ['Les habitants manquent de culture, de sport et de sorties.'], actions: ['Construire un cinéma, un gymnase, une piscine ou un musée (menu Loisirs).'], view: 'leisure' });
+  const risky = sim.tourism.events.find((e) => e.status === 'planned' && e.est.securityAvailable < e.est.security);
+  if (risky) out.push({ id: 'event-security', severity: 'warning', title: 'Événement à venir mal sécurisé', causes: [`${risky.est.security} équipes de sécurité nécessaires, ${risky.est.securityAvailable} disponibles.`], actions: ['Construire un commissariat près du lieu ou augmenter le budget Police.', 'Réduire la jauge de l’événement.'], tile: risky.venue });
+  if (sim.tourism.hotelRooms && sim.tourism.occupancy > 0.95) out.push({ id: 'hotels-full', severity: 'warning', title: 'Hôtels complets', causes: [`${sim.tourism.tourists.toLocaleString('fr-FR')} touristes par mois pour ${sim.tourism.hotelRooms.toLocaleString('fr-FR')} chambres.`], actions: ['Zoner davantage de Tourisme (hôtels).'] });
+
   const abandoning = built.filter((k) => ut.problemDays[k] > 0);
   if (abandoning.length) {
     out.push({
