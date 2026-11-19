@@ -15,6 +15,7 @@ import { UndoStack } from './sim/Undo';
 import { applySave, parseSave, serialize, worldFromSave, type SaveFile } from './sim/save';
 import { Hud } from './ui/Hud';
 import * as roadGeometry from './sim/roadGeometry';
+import { computeReach } from './sim/ServiceReach';
 import { GameMenu, showMainMenu } from './ui/Menu';
 import type { GameConfig } from './game/config';
 import { readSave, setBoot, takeBoot, writeSave, type Boot } from './game/storage';
@@ -160,7 +161,7 @@ function startGame(config: GameConfig, file?: SaveFile): void {
   if (!file) sim.events.emit('notify', { text: `Bienvenue à ${config.cityName} ! Commencez par tracer une route.`, kind: 'info' });
 
   // Accès console pour le débogage
-  Object.assign(window, { game: { world, sim, view, cam, tools, trafficView, dataView, services, transitView, atmosphere, undo }, __geo: roadGeometry });
+  Object.assign(window, { game: { world, sim, view, cam, tools, trafficView, dataView, services, transitView, atmosphere, undo }, __geo: roadGeometry, __reach: computeReach });
 }
 
 async function loadAndStart(data: string | null): Promise<boolean> {

@@ -2,6 +2,9 @@ import { GAME_NAME } from '../config';
 import { BudgetPanel } from './BudgetPanel';
 import { DIR_NAMES, ROAD_INFO, RoadType } from '../sim/roads';
 import { StatsPanel } from './StatsPanel';
+import { AdvisorPanel } from './AdvisorPanel';
+import { SEVERITY_NAMES } from '../sim/Advisor';
+import { FACILITY_VEHICLES } from '../sim/ServiceReach';
 import { companyName, residentsOf } from '../sim/names';
 import { BUS_STOP_COST, BUS_UNLOCK, MILESTONES } from '../sim/economy';
 import { SEASON_NAMES, WEATHER_NAMES } from '../sim/Environment';
@@ -26,6 +29,7 @@ const ICONS: Record<string, string> = {
   transport: '<rect x="5" y="3" width="14" height="14" rx="3"/><path d="M5 11h14"/><circle cx="8.5" cy="14" r="1"/><circle cx="15.5" cy="14" r="1"/><path d="M7 17l-1.5 3M17 17l1.5 3"/>',
   services: '<path d="M3 21h18M5 21V10l7-5 7 5v11"/><path d="M10 21v-5h4v5"/>',
   stats: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  advisor: '<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.5 1 2.5h6c0-1 .3-1.8 1-2.5A6 6 0 0 0 12 3z"/>',
   bell: '<path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
   undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
   redo: '<path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>',
@@ -96,6 +100,7 @@ export class Hud {
   private el = (sel: string) => this.root.querySelector(sel) as HTMLElement;
   private openGroup: string | null = null;
   private budget!: BudgetPanel;
+  private advisor!: AdvisorPanel;
   private stats!: StatsPanel;
   private journal: Array<{ date: string; text: string; kind: string; tile?: number }> = [];
   private unread = 0;
@@ -120,7 +125,7 @@ export class Hud {
     refresh();
   }
 
-  constructor(private root: HTMLElement, private sim: Simulation, private tools: ToolManager, views: DataView) {
+  constructor(private root: HTMLElement, private sim: Simulation, private tools: ToolManager, private views: DataView) {
     root.innerHTML = `
       <header class="topbar panel">
         <button class="brand" id="menu-btn" title="Menu : sauvegarder, charger, nouvelle partie (F10)"><span class="logo"></span><span class="city-name">${GAME_NAME}</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg></button>
@@ -136,6 +141,7 @@ export class Hud {
         </div>
         <div class="spacer"></div>
         <div class="milestone" id="milestone" title=""><span class="ms-name"></span><div class="ms-bar"><i></i></div></div>
+        <button class="icon-btn advisor-btn" id="advisor-btn" title="Conseiller : problèmes, causes et solutions">${icon('advisor')}<i class="badge" id="advisor-badge" hidden></i></button>
         <button class="icon-btn" id="stats-btn" title="Statistiques">${icon('stats')}</button>
         <button class="icon-btn" id="journal-btn" title="Journal de la ville">${icon('bell')}<i class="badge" id="journal-badge" hidden></i></button>
         <div class="views">
@@ -164,6 +170,7 @@ export class Hud {
       <div class="tooltip" id="tooltip" hidden></div>
       <div class="modal-wrap" id="ms-popup" hidden><div class="modal panel ms-modal"><div class="ms-kicker">Nouveau palier</div><h2 id="ms-title"></h2><p id="ms-text"></p><button class="primary" id="ms-ok">Continuer</button></div></div>
       <div class="toasts" id="toasts"></div>
+      <aside class="legend panel" id="legend" hidden></aside>
       <aside class="journal panel" id="journal" hidden><div class="journal-head"><b>Journal de la ville</b><button id="journal-close" aria-label="Fermer">×</button></div><ol id="journal-list"></ol></aside>
       <div class="help panel" id="help">
         <b>Pour bien démarrer</b>
@@ -201,6 +208,31 @@ export class Hud {
     this.budget = new BudgetPanel(root, sim);
     this.stats = new StatsPanel(root, sim);
     this.el('#stats-btn').addEventListener('click', () => this.stats.toggle());
+    this.advisor = new AdvisorPanel(root, sim);
+    this.el('#advisor-btn').addEventListener('click', () => { this.toggleJournal(false); this.advisor.toggle(); });
+    this.advisor.onShow = (tile, view) => {
+      if (tile !== undefined) this.focusTile(tile);
+      if (view && this.views.mode !== view) this.views.set(view as ViewMode);
+    };
+    this.advisor.onBadge = (worst, count) => {
+      const b = this.el('#advisor-badge');
+      b.hidden = count === 0;
+      b.textContent = String(count);
+      b.className = `badge sev-${worst}`;
+      this.el('#advisor-btn').title = count ? `Conseiller : ${count} problème(s), le plus grave est « ${SEVERITY_NAMES[worst]} »` : 'Conseiller : tout va bien';
+    };
+    // Indicateurs cliquables de la barre du haut
+    const link = (id: string, fn: () => void, hint: string) => {
+      const el = this.el(id).closest('.stat') as HTMLElement;
+      el.classList.add('clickable');
+      el.title = hint;
+      el.addEventListener('click', fn);
+    };
+    link('#balance', () => this.budget.toggle(true), 'Solde mensuel : cliquez pour ouvrir le budget');
+    link('#pop', () => this.stats.toggle(true), 'Population : cliquez pour les statistiques');
+    link('#jobs', () => this.stats.toggle(true), 'Emplois : cliquez pour les statistiques');
+    link('#happy', () => this.advisor.toggle(true), 'Bonheur moyen : cliquez pour voir ce qui l\'améliore');
+    link('#flow', () => views.set('traffic'), 'Vitesse moyenne des véhicules : cliquez pour la carte du trafic');
     this.el('#journal-btn').addEventListener('click', () => this.toggleJournal());
     this.el('#journal-close').addEventListener('click', () => this.toggleJournal(false));
     this.el('#journal-list').addEventListener('click', (e) => {
@@ -220,6 +252,7 @@ export class Hud {
       this.el('#ms-popup').hidden = false;
     });
     setInterval(() => { this.updateTraffic(); this.updateDate(); }, 500);
+    setInterval(() => { if (this.views.mode !== 'none') this.renderLegend(); }, 2000);
 
     let lastSpeed = 1;
     window.addEventListener('keydown', (e) => {
@@ -342,6 +375,18 @@ export class Hud {
     this.el('#views-label').textContent = label ?? 'Vues';
     this.el('#views-btn').classList.toggle('active', mode !== 'none');
     this.root.querySelectorAll<HTMLElement>('#views-menu button').forEach((b) => b.classList.toggle('active', b.dataset.view === mode));
+    this.renderLegend();
+  }
+
+  /** Légende de la carte de données : titre, unité, couleurs, explication, date de mise à jour. */
+  private renderLegend(): void {
+    const box = this.el('#legend');
+    const L = this.views.legend;
+    if (!L) { box.hidden = true; return; }
+    box.hidden = false;
+    box.innerHTML = `<div class="lg-title">${L.title}</div><div class="lg-unit">${L.unit}</div>
+      <ul>${L.items.map(([c, t]) => `<li><i style="background:${c}"></i>${t}</li>`).join('')}</ul>
+      <p>${L.explanation}</p><div class="lg-date">Mise à jour : ${this.views.updatedAt || '…'}</div>`;
   }
 
   private updateTraffic(): void {
@@ -399,7 +444,17 @@ export class Hud {
       const info = SERVICE_INFO[svc as Exclude<Service, 0>];
       kind = `<span class="dot" style="background:${info.color}"></span>${info.name}`;
       if (info.utility !== undefined) extra += `<dt>Production</dt><dd>${info.capacity!.toLocaleString('fr-FR')}</dd>`;
-      if (info.radius) extra += `<dt>Rayon</dt><dd>${info.radius} cases</dd>`;
+      if (info.radius) extra += `<dt>Portée</dt><dd>${info.radius} cases de route</dd>`;
+      const L = ut.loads.get(idx);
+      if (L) {
+        if (L.capacity) extra += `<dt>${svc === 6 ? 'Patients' : 'Élèves'}</dt><dd class="${L.used >= L.capacity * 0.95 ? 'bad' : ''}">${L.used} / ${L.capacity}</dd>`;
+        if (svc === 6) extra += `<dt>Attente</dt><dd>${L.wait.toFixed(1)} jour(s)</dd>`;
+        extra += `<dt>Bâtiments à portée</dt><dd>${L.reached}</dd>`;
+      }
+      if (FACILITY_VEHICLES[svc]) {
+        const total = this.sim.emergency.available(idx) + this.sim.emergency.inService(idx);
+        extra += `<dt>Véhicules</dt><dd>${this.sim.emergency.inService(idx)} en mission / ${total}</dd>`;
+      }
       extra += `<dt>Entretien</dt><dd>${fmt(info.upkeep)}/mois</dd>`;
       if (ut.networkOf(idx) < 0) extra += `<dt>État</dt><dd class="bad">Pas relié aux routes</dd>`;
     }

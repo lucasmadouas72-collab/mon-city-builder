@@ -82,6 +82,7 @@ export class StatsPanel {
       <div class="cbar"><i style="width:${(counts[i] / max) * 100}%"></i></div><b>${num(counts[i])}</b></div>`).join('');
 
     const cov = (c: Coverage) => pct(us.coverage[c] ?? 0);
+    const us2 = s.utilities.reach, es = s.emergency.stats;
     this.q('#society').innerHTML = `
       <dl class="facts">
         <dt>Actifs</dt><dd>${num(st.workers)}</dd>
@@ -92,6 +93,12 @@ export class StatsPanel {
         <dt>Pollution sonore</dt><dd>${pct(us.noise)}</dd>
         ${[Coverage.Health, Coverage.Education, Coverage.Police, Coverage.Fire, Coverage.Park].map((c) => `<dt>Couverture ${COVERAGE_NAMES[c].toLowerCase()}</dt><dd>${cov(c)}</dd>`).join('')}
         <dt>Trajets en transport en commun</dt><dd>${pct(s.traffic.transitShare)}</dd>
+        <dt>Places à l'école</dt><dd>${num(us2.students - us2.unschooled)} / ${num(us2.seats)}</dd>
+        <dt>Patients soignés</dt><dd>${num(us2.patients - us2.untreated)} / ${num(us2.patients)}</dd>
+        <dt>Délinquance</dt><dd>${pct(s.crimeIndex)}</dd>
+        <dt>Intervention pompiers</dt><dd>${es.response.fire ? `${es.response.fire} min` : '–'} · ${es.resolved.fire} réussie(s), ${es.failed.fire} ratée(s)</dd>
+        <dt>Intervention ambulances</dt><dd>${es.response.medical ? `${es.response.medical} min` : '–'} · ${es.resolved.medical} / ${es.failed.medical}</dd>
+        <dt>Intervention police</dt><dd>${es.response.crime ? `${es.response.crime} min` : '–'} · ${es.resolved.crime} / ${es.failed.crime}</dd>
       </dl>`;
 
     const hist = s.history;

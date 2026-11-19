@@ -100,22 +100,22 @@ export const SERVICE_INFO: Record<Exclude<Service, Service.None>, ServiceInfo> =
   },
   [Service.Clinic]: {
     name: 'Clinique', category: 'services', description: 'Soigne les habitants du quartier.',
-    cost: 4200, upkeep: 260, color: '#f87171', coverage: Coverage.Health, radius: 12,
+    cost: 4200, upkeep: 260, color: '#f87171', coverage: Coverage.Health, radius: 20,
  budget: 'health', unlockPop: 300,
   },
   [Service.School]: {
     name: 'École', category: 'services', description: 'Nécessaire pour les immeubles résidentiels de niveau 3.',
-    cost: 3800, upkeep: 230, color: '#fb923c', coverage: Coverage.Education, radius: 11,
+    cost: 3800, upkeep: 230, color: '#fb923c', coverage: Coverage.Education, radius: 16,
  budget: 'education', unlockPop: 300,
   },
   [Service.Police]: {
     name: 'Commissariat', category: 'services', description: 'Fait baisser la délinquance.',
-    cost: 3600, upkeep: 220, color: '#60a5fa', coverage: Coverage.Police, radius: 12,
+    cost: 3600, upkeep: 220, color: '#60a5fa', coverage: Coverage.Police, radius: 20,
  budget: 'police', unlockPop: 1200,
   },
   [Service.FireStation]: {
     name: 'Caserne de pompiers', category: 'services', description: 'Évite que les incendies détruisent les bâtiments.',
-    cost: 3600, upkeep: 220, color: '#ef4444', coverage: Coverage.Fire, radius: 12,
+    cost: 3600, upkeep: 220, color: '#ef4444', coverage: Coverage.Fire, radius: 20,
  budget: 'fire', unlockPop: 0,
   },
   [Service.Park]: {

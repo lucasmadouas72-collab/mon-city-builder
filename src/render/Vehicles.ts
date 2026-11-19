@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Traffic } from '../sim/Traffic';
-import { VehicleKind } from '../sim/Traffic';
 import type { World } from '../sim/World';
 import { patchEnv } from './envMaterials';
 
@@ -54,6 +53,45 @@ function busGeometry(): THREE.BufferGeometry {
   ])!;
 }
 
+function ambulanceGeometry(): THREE.BufferGeometry {
+  const B = THREE.BoxGeometry;
+  return mergeGeometries([
+    part(new B(0.12, 0.1, 0.2), '#ffffff', 0, 0.07, -0.03),
+    part(new B(0.12, 0.065, 0.08), '#ffffff', 0, 0.055, 0.1),
+    part(new B(0.122, 0.028, 0.05), '#1d2733', 0, 0.075, 0.11),
+    part(new B(0.123, 0.018, 0.2), '#e11d48', 0, 0.075, -0.03), // bande rouge
+    part(new B(0.07, 0.02, 0.03), '#ff4d4d', 0, 0.13, 0.04), // gyrophare
+    part(new B(0.125, 0.024, 0.04), '#141414', 0, 0.02, 0.09),
+    part(new B(0.125, 0.024, 0.04), '#141414', 0, 0.02, -0.09),
+  ])!;
+}
+
+function fireTruckGeometry(): THREE.BufferGeometry {
+  const B = THREE.BoxGeometry;
+  return mergeGeometries([
+    part(new B(0.13, 0.1, 0.3), '#ffffff', 0, 0.07, -0.04),
+    part(new B(0.13, 0.08, 0.1), '#ffffff', 0, 0.065, 0.15),
+    part(new B(0.132, 0.03, 0.06), '#1d2733', 0, 0.085, 0.17),
+    part(new B(0.04, 0.025, 0.28), '#d1d5db', 0, 0.135, -0.04), // échelle
+    part(new B(0.08, 0.02, 0.03), '#ffd23f', 0, 0.115, 0.13),
+    part(new B(0.135, 0.026, 0.05), '#141414', 0, 0.02, 0.13),
+    part(new B(0.135, 0.026, 0.05), '#141414', 0, 0.02, -0.12),
+  ])!;
+}
+
+function policeGeometry(): THREE.BufferGeometry {
+  const B = THREE.BoxGeometry;
+  return mergeGeometries([
+    part(new B(0.11, 0.045, 0.22), '#ffffff', 0, 0.035, 0),
+    part(new B(0.096, 0.04, 0.11), '#ffffff', 0, 0.075, -0.012),
+    part(new B(0.1, 0.03, 0.112), '#1d2733', 0, 0.072, -0.012),
+    part(new B(0.112, 0.016, 0.22), '#f8fafc', 0, 0.04, 0), // bande blanche
+    part(new B(0.07, 0.016, 0.025), '#60a5fa', 0, 0.103, -0.01), // rampe lumineuse
+    part(new B(0.115, 0.022, 0.04), '#141414', 0, 0.018, 0.065),
+    part(new B(0.115, 0.022, 0.04), '#141414', 0, 0.018, -0.065),
+  ])!;
+}
+
 /** Rendu instancié des véhicules, synchronisé à chaque image sur la simulation. */
 export class Vehicles {
   readonly group = new THREE.Group();
@@ -67,7 +105,7 @@ export class Vehicles {
 
   constructor(private world: World, private traffic: Traffic) {
     const mat = patchEnv(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.25 }), { headlights: true, snow: true });
-    this.meshes = [carGeometry(), truckGeometry(), busGeometry()].map((g) => {
+    this.meshes = [carGeometry(), truckGeometry(), busGeometry(), ambulanceGeometry(), fireTruckGeometry(), policeGeometry()].map((g) => {
       const mesh = new THREE.InstancedMesh(g, mat, MAX);
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.castShadow = true;
@@ -81,9 +119,10 @@ export class Vehicles {
 
   update(): void {
     const w = this.world;
-    const counts = [0, 0, 0];
+    const counts = [0, 0, 0, 0, 0, 0];
+    const flash = Math.floor(performance.now() / 180) % 2 === 0;
     for (const v of this.traffic.vehicles) {
-      const k = v.kind === VehicleKind.Bus ? 2 : v.kind === VehicleKind.Truck ? 1 : 0;
+      const k = v.kind as number;
       const mesh = this.meshes[k];
       const id = counts[k]++;
       if (id >= MAX) continue;
@@ -97,6 +136,8 @@ export class Vehicles {
       this.p.set(v.x, y, v.z);
       mesh.setMatrixAt(id, this.m.compose(this.p, this.q, this.s));
       mesh.setColorAt(id, this.c.setHex(v.color));
+      // Gyrophares : la teinte alterne pendant une intervention (pas au retour)
+      if (k >= 3 && v.mission > 0 && flash) this.c.offsetHSL(0, 0, k === 5 ? 0.25 : 0.12), mesh.setColorAt(id, this.c);
     }
     this.meshes.forEach((mesh, k) => {
       mesh.count = Math.min(counts[k], MAX);

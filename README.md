@@ -51,6 +51,7 @@ Puis ouvrir l'adresse affichée (http://localhost:5173).
 - [x] Phase 5 : économie, bus, métro, paliers
 - [x] Phase 6 : jour/nuit, saisons, météo, pollution, démographie, statistiques, journal, sauvegardes, nouvelle partie, annuler, terrain
 - [x] Étape 7 : routes droites à tous les angles, diagonales et courbes, rues / avenues / autoroutes / voies piétonnes, ponts, terrassement automatique, sens uniques, feux tricolores, remplacement de routes, règle « ne pas bloquer le carrefour », caméra (centrer, vue de dessus, retour, positions mémorisées)
+- [x] Étape 8 : capacités des écoles et cliniques (élèves affectés par âge, distance et places ; temps d'attente), couverture des services calculée par la route avec les embouteillages, pompiers / ambulances / police en véhicules pris dans le trafic, délinquance et délits, conseiller (gravité, causes probables, actions, « Voir sur la carte »), légendes des cartes de données, indicateurs cliquables
 
 ### Prochaines étapes (cahier des charges)
 

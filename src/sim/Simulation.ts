@@ -7,6 +7,7 @@ import { Tile, World } from './World';
 import { Traffic } from './Traffic';
 import { Utilities } from './Utilities';
 import { Environment } from './Environment';
+import { Emergency } from './Emergency';
 import { Demographics } from './Population';
 import { DIFFICULTY, defaultConfig, type GameConfig } from '../game/config';
 import { Transit, type TransitKind } from './Transit';
@@ -97,6 +98,9 @@ export class Simulation {
   readonly utilities: Utilities;
   readonly transit: Transit;
   readonly env = new Environment();
+  readonly emergency: Emergency;
+  /** Délinquance moyenne des bâtiments (0 à 1). */
+  crimeIndex = 0;
   readonly demo = new Demographics();
   config: GameConfig = defaultConfig();
   /** Mode bac à sable : argent illimité, tout est débloqué. */
@@ -114,6 +118,14 @@ export class Simulation {
     this.utilities.budget = (k) => this.budgets[k] / 100;
     this.utilities.trafficDensity = this.traffic.density;
     this.transit = new Transit(world, this.traffic);
+    this.emergency = new Emergency(world, this.traffic);
+    this.emergency.budget = (svc) => this.budgets[SERVICE_INFO[svc as Exclude<Service, Service.None>].budget] / 100;
+    this.emergency.onFireReached = (tile) => {
+      if (!this.utilities.fire[tile]) return;
+      this.utilities.fire[tile] = 0;
+      this.events.emit('firesChanged', undefined);
+      this.events.emit('notify', { text: 'Incendie maîtrisé par les pompiers', kind: 'info', tile });
+    };
     this.recomputeStats();
   }
 
@@ -227,6 +239,7 @@ export class Simulation {
     // Trafic : pas variable (mouvement fluide), découpé pour rester stable en vitesse rapide
     const sub = Math.ceil(scaled / 0.05);
     this.env.advance(scaled);
+    this.emergency.update(scaled);
     this.traffic.speedFactor = this.env.trafficSpeed;
     const target = Math.round(this.traffic.targetVehicles(this.stats.population, this.stats.totalJobs) * (1 - this.traffic.transitShare) * this.env.trafficVolume);
     for (let k = 0; k < sub; k++) this.traffic.update(scaled / sub, target);
@@ -254,6 +267,9 @@ export class Simulation {
     const w = this.world;
     const changed: number[] = [];
     if (this.env.onNewDay(this.monthIndex)) this.events.emit('weatherChanged', undefined);
+    this.emergency.daily(this.dayCount);
+    this.generateIncidents();
+    if (this.dayCount % 10 === 0) this.computeCrime();
 
     // Avancement des chantiers
     for (const idx of this.zonedTiles()) {
@@ -282,17 +298,19 @@ export class Simulation {
       } else ut.problemDays[idx] = 0;
       const covered = (ut.coverage[idx] & Coverage.Fire) !== 0;
       if (ut.fire[idx]) {
+        // Le feu progresse jusqu'à l'arrivée des pompiers (véhicules sur la route)
         ut.fire[idx]--;
-        if (covered && ut.fire[idx] > 0 && this.rand() < 0.45) ut.fire[idx] = 0; // les pompiers éteignent
-        if (ut.fire[idx] === 0 && !covered) {
+        if (ut.fire[idx] === 0) {
           this.clearBuilding(idx);
           changed.push(idx);
-          this.events.emit('notify', { text: 'Un bâtiment a brûlé (pas de caserne à proximité)', kind: 'warn', tile: idx });
+          this.emergency.closeFire(idx, true);
+          this.events.emit('notify', { text: covered ? 'Un bâtiment a brûlé : les pompiers sont arrivés trop tard (trafic ou casernes occupées)' : 'Un bâtiment a brûlé : aucune caserne à portée', kind: 'warn', tile: idx });
+          this.events.emit('firesChanged', undefined);
         }
-        if (!ut.fire[idx]) this.events.emit('firesChanged', undefined);
-      } else if (this.rand() < (covered ? 0.00001 : 0.00006) * w.bLevel[idx]) {
-        ut.fire[idx] = 8;
-        this.events.emit('notify', { text: covered ? 'Incendie déclaré, les pompiers interviennent' : 'Incendie déclaré, aucune caserne à proximité !', kind: 'warn', tile: idx });
+      } else if (this.rand() < (covered ? 0.00003 : 0.00006) * w.bLevel[idx] * (this.env.weather === 'heat' ? 2 : 1)) {
+        ut.fire[idx] = 20; // durée avant destruction (jours), cohérente avec le temps de trajet des camions
+        this.emergency.report('fire', idx, this.dayCount);
+        this.events.emit('notify', { text: covered ? 'Incendie déclaré, les pompiers sont en route' : 'Incendie déclaré, aucune caserne à portée !', kind: 'warn', tile: idx });
         this.events.emit('firesChanged', undefined);
       }
     }
@@ -346,6 +364,43 @@ export class Simulation {
     } else if (this.dayCount % 5 === 0) {
       this.recomputeStats();
     }
+  }
+
+  /** Urgences médicales et délits du jour (selon les malades et la délinquance). */
+  private generateIncidents(): void {
+    const w = this.world;
+    const tiles = this.zonedTiles();
+    if (!tiles.length || !this.stats.population) return;
+    const medical = this.stats.population * this.demo.sick * 0.004;
+    for (let k = 0; k < 3; k++) {
+      if (this.rand() > medical / 3) continue;
+      const idx = tiles[Math.floor(this.rand() * tiles.length)];
+      if (w.bState[idx] === BuildState.Built && w.zones[idx] === Zone.Residential) this.emergency.report('medical', idx, this.dayCount);
+    }
+    for (let k = 0; k < 25; k++) {
+      const idx = tiles[Math.floor(this.rand() * tiles.length)];
+      if (w.bState[idx] !== BuildState.Built) continue;
+      if (this.rand() < this.utilities.crime[idx] * 0.03 * w.bLevel[idx]) this.emergency.report('crime', idx, this.dayCount);
+    }
+  }
+
+  /** Délinquance : chômage, faible valeur foncière, absence de police et délits non élucidés. */
+  computeCrime(): void {
+    const w = this.world, ut = this.utilities;
+    const unemp = this.stats.unemployment;
+    let sum = 0, count = 0;
+    const unsolved = new Map<number, number>();
+    for (const inc of this.emergency.incidents) if (inc.type === 'crime' && inc.status === 'failed') unsolved.set(inc.tile, (unsolved.get(inc.tile) ?? 0) + 1);
+    for (const idx of this.zonedTiles()) {
+      if (w.bState[idx] !== BuildState.Built) { ut.crime[idx] = 0; continue; }
+      const lv = this.landValue(idx);
+      let c = 0.1 + unemp * 1.1 + (0.5 - lv) * 0.5 - (ut.coverage[idx] & Coverage.Police ? 0.3 : 0) + (unsolved.get(idx) ?? 0) * 0.1;
+      if (w.zones[idx] === Zone.Commercial) c += 0.05;
+      c = clamp(c, 0, 1);
+      ut.crime[idx] = c;
+      sum += c; count++;
+    }
+    this.crimeIndex = count ? sum / count : 0;
   }
 
   private startConstruction(idx: number, level: number): void {
@@ -440,6 +495,8 @@ export class Simulation {
     }
     this.utilities.happinessOffset = -(this.taxes[Zone.Residential] - DEFAULT_TAX) * 0.012 + this.env.happiness;
     this.utilities.consumptionMul = this.env.consumption(this.monthIndex);
+    this.utilities.studentShare = this.demo.shares[1] + this.demo.shares[2] + this.demo.shares[3] * 0.25;
+    this.utilities.sickShare = this.demo.sick;
     this.utilities.compute();
     const totalJobs = jobs[Zone.Commercial] + jobs[Zone.Industrial] + jobs[Zone.Office];
     const workers = this.demo.workers(population);

@@ -13,7 +13,13 @@ export const enum VehicleKind {
   Car = 0,
   Truck = 1,
   Bus = 2,
+  Ambulance = 3,
+  FireTruck = 4,
+  Police = 5,
 }
+
+/** Véhicules d'urgence : prioritaires aux feux, mais pris dans les bouchons. */
+export const isEmergency = (k: VehicleKind) => k >= VehicleKind.Ambulance;
 
 const LANE = 0.17; // décalage de la voie par rapport à l'axe de la route
 const CAR_SPEED = 1.9; // cases par seconde à vitesse 1
@@ -48,6 +54,8 @@ export interface Vehicle {
   loop: boolean;
   dwell: number;
   stops: Set<number> | null;
+  /** Intervention : identifiant d'incident (> 0), retour à la base (< 0), ou 0. */
+  mission: number;
 }
 
 interface WeightedList {
@@ -277,7 +285,7 @@ export class Traffic {
       path, seg: 0, t: 0, speed: 0,
       maxSpeed: (kind === VehicleKind.Truck ? TRUCK_SPEED : CAR_SPEED) * (0.9 + this.rand() * 0.2),
       x: 0, z: 0, hx: 1, hz: 0, c: [0, 0, 0, 0, 0, 0], len: 1, wait: 0, holding: -1, age: 0,
-      line: 0, loop: false, dwell: 0, stops: null,
+      line: 0, loop: false, dwell: 0, stops: null, mission: 0,
     };
     this.setupSegment(v);
     this.place(v);
@@ -292,11 +300,27 @@ export class Traffic {
       id: this.nextId++, kind: VehicleKind.Bus, color: parseInt(color.slice(1), 16),
       path, seg: start % path.length, t: 0, speed: 0, maxSpeed: 1.5,
       x: 0, z: 0, hx: 1, hz: 0, c: [0, 0, 0, 0, 0, 0], len: 1, wait: 0, holding: -1, age: 0,
-      line, loop: true, dwell: 0, stops,
+      line, loop: true, dwell: 0, stops, mission: 0,
     };
     this.setupSegment(v);
     this.place(v);
     this.vehicles.push(v);
+  }
+
+  /** Fin de trajet d'un véhicule d'intervention. */
+  onMission?: (v: Vehicle) => void;
+
+  addMissionVehicle(path: number[], kind: VehicleKind, mission: number): Vehicle {
+    const v: Vehicle = {
+      id: this.nextId++, kind, color: kind === VehicleKind.FireTruck ? 0xd92b2b : kind === VehicleKind.Police ? 0x1e3a8a : 0xf8fafc,
+      path, seg: 0, t: 0, speed: 0, maxSpeed: 2.2,
+      x: 0, z: 0, hx: 1, hz: 0, c: [0, 0, 0, 0, 0, 0], len: 1, wait: 0, holding: -1, age: 0,
+      line: 0, loop: false, dwell: 0, stops: null, mission,
+    };
+    this.setupSegment(v);
+    this.place(v);
+    this.vehicles.push(v);
+    return v;
   }
 
   removeLineVehicles(line: number): void {
@@ -408,7 +432,7 @@ export class Traffic {
     const w = this.world;
     this.vehicles = this.vehicles.filter((v) => {
       for (let k = v.seg; k < v.path.length; k++) {
-        if (w.tiles[v.path[k]] !== 1) { this.release(v); return false; }
+        if (w.tiles[v.path[k]] !== 1) { this.release(v); if (v.mission) this.onMission?.(v); return false; }
       }
       return true;
     });
@@ -430,7 +454,7 @@ export class Traffic {
     this.clock += dt;
     // Création progressive de nouveaux trajets
     let buses = 0;
-    for (const v of this.vehicles) if (v.loop) buses++;
+    for (const v of this.vehicles) if (v.loop || v.mission) buses++;
     const cars = () => this.vehicles.length - buses;
     if (cars() < target) {
       this.spawnBudget += dt * (4 + target * 0.08);
@@ -476,7 +500,7 @@ export class Traffic {
         }
       }
       let targetSpeed = v.maxSpeed * this.speedFactor * (ROAD_INFO[this.world.roadType[v.path[v.seg]] as RoadType]?.speed ?? 1);
-      const len = v.kind === VehicleKind.Bus ? 0.4 : v.kind === VehicleKind.Truck ? 0.34 : 0.24;
+      const len = v.kind === VehicleKind.Bus || v.kind === VehicleKind.FireTruck ? 0.4 : v.kind === VehicleKind.Truck ? 0.34 : 0.26;
       if (v.dwell > 0) { v.dwell -= dt; targetSpeed = 0; }
       if (gap < Infinity) targetSpeed *= Math.max(0, Math.min(1, (gap - len) / SAFE_GAP));
 
@@ -490,7 +514,8 @@ export class Traffic {
         const lit = this.world.lights[next] === 1 || this.world.lights[next] === 2;
         // « Ne pas bloquer le carrefour » : on n'entre que si la sortie a de la place
         const boxFull = !this.exitClear(v) || (this.occupants.get(next)?.size ?? 0) >= 4;
-        const blocked = (lit ? !this.green(next, d[0] !== 0) : !this.canEnter(next, entry) && v.wait < 2.5) || (boxFull && v.wait < 6);
+        const urgent = isEmergency(v.kind);
+        const blocked = (!urgent && (lit ? !this.green(next, d[0] !== 0) : !this.canEnter(next, entry) && v.wait < 2.5)) || (boxFull && v.wait < 6);
         if (boxFull && !blocked) v.wait = 0;
         if (blocked) {
           stopAt = Math.max(0, remaining - 0.02);
@@ -530,7 +555,8 @@ export class Traffic {
       }
       if (!alive || (v.age > 240 && !v.loop)) {
         this.release(v);
-        if (alive) this.tripsFailed++; else this.tripsCompleted++;
+        if (v.mission) this.onMission?.(v);
+        else if (alive) this.tripsFailed++; else this.tripsCompleted++;
         continue;
       }
       this.place(v);

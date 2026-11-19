@@ -6,7 +6,7 @@ import { Overlay } from './Overlay';
 
 export type ViewMode =
   | 'none' | 'traffic' | 'power' | 'water' | 'sewage' | 'garbage'
-  | 'health' | 'education' | 'police' | 'fire' | 'park' | 'happiness' | 'land' | 'transport' | 'air' | 'noise';
+  | 'health' | 'education' | 'police' | 'fire' | 'park' | 'happiness' | 'land' | 'transport' | 'air' | 'noise' | 'crime';
 
 export const VIEW_LABELS: Array<[ViewMode, string]> = [
   ['traffic', 'Trafic'],
@@ -18,6 +18,7 @@ export const VIEW_LABELS: Array<[ViewMode, string]> = [
   ['health', 'Santé'],
   ['education', 'Éducation'],
   ['police', 'Police'],
+  ['crime', 'Délinquance'],
   ['fire', 'Pompiers'],
   ['park', 'Parcs'],
   ['air', "Pollution de l'air"],
@@ -42,6 +43,40 @@ const COV: Partial<Record<ViewMode, [Coverage, Service]>> = {
 
 const TRAFFIC_LEVELS: Array<[number, string]> = [[0.35, '#22c55e'], [1.0, '#a3e635'], [1.8, '#facc15'], [2.8, '#f97316'], [Infinity, '#ef4444']];
 const POLL = ['#fde68a', '#fbbf24', '#f97316', '#dc2626', '#7f1d1d'];
+const LOAD = (r: number) => (r < 0.7 ? '#22c55e' : r < 0.95 ? '#facc15' : '#ef4444');
+
+export interface Legend {
+  title: string;
+  unit: string;
+  items: Array<[string, string]>;
+  explanation: string;
+}
+
+const COVERED_BY = (name: string, color: string, explanation: string): Legend => ({
+  title: name, unit: 'portée par la route (temps de trajet)',
+  items: [[color, 'Bâtiment desservi'], ['#7f1d1d', 'Bâtiment non desservi'], ['#22c55e', 'Établissement : places libres'], ['#facc15', 'Établissement : presque plein'], ['#ef4444', 'Établissement : complet']],
+  explanation,
+});
+
+const LEGENDS: Record<Exclude<ViewMode, 'none'>, Legend> = {
+  traffic: { title: 'Trafic', unit: 'véhicules par case (moyenne glissante)', items: [['#22c55e', 'Fluide (< 0,35)'], ['#a3e635', 'Normal'], ['#facc15', 'Chargé'], ['#f97316', 'Dense'], ['#ef4444', 'Embouteillé (> 2,8)']], explanation: 'Densité de véhicules sur chaque case de route. Les axes rouges ralentissent tous les trajets, y compris les secours.' },
+  transport: { title: 'Transports en commun', unit: 'distance à pied d’un arrêt', items: [['#38bdf8', 'Bâtiment desservi par une ligne']], explanation: 'Bâtiments à moins de 6 cases d’un arrêt de bus ou 9 cases d’une station de métro. Les lignes sont tracées en couleur.' },
+  power: { title: 'Électricité', unit: 'raccordement', items: [['#ffffff', 'Centrale, éolienne'], ['#22c55e', 'Alimenté'], ['#ef4444', 'Sans électricité']], explanation: 'L’électricité circule par le réseau routier. Un quartier coupé du réseau ou une production insuffisante laisse des bâtiments sans courant.' },
+  water: { title: 'Eau potable', unit: 'raccordement', items: [['#ffffff', 'Station de pompage'], ['#22c55e', 'Alimenté'], ['#ef4444', 'Sans eau']], explanation: 'La capacité des stations de pompage limite le nombre de bâtiments desservis.' },
+  sewage: { title: 'Égouts', unit: 'raccordement', items: [['#ffffff', 'Station d’épuration'], ['#22c55e', 'Raccordé'], ['#ef4444', 'Non raccordé']], explanation: 'Sans épuration, les immeubles ne peuvent pas passer au niveau 3.' },
+  garbage: { title: 'Déchets', unit: 'collecte', items: [['#ffffff', 'Centre de tri'], ['#22c55e', 'Collecté'], ['#ef4444', 'Non collecté']], explanation: 'Les déchets non collectés réduisent le bonheur.' },
+  health: COVERED_BY('Santé', SERVICE_INFO[Service.Clinic].color, 'Chaque clinique accueille un nombre limité de patients. Les malades vont à la clinique accessible la plus proche qui a de la place.'),
+  education: COVERED_BY('Éducation', SERVICE_INFO[Service.School].color, 'Chaque école a un nombre de places limité. Les élèves sont affectés selon leur âge, la distance et les places disponibles.'),
+  police: COVERED_BY('Police', SERVICE_INFO[Service.Police].color, 'Zone que les patrouilles atteignent à temps par la route. Les embouteillages la réduisent.'),
+  fire: COVERED_BY('Pompiers', SERVICE_INFO[Service.FireStation].color, 'Zone que les camions atteignent à temps par la route. Un incendie hors de portée détruit le bâtiment.'),
+  park: { title: 'Parcs', unit: 'distance à pied (4 cases)', items: [[SERVICE_INFO[Service.Park].color, 'À proximité d’un parc'], ['#7f1d1d', 'Sans parc']], explanation: 'Les parcs augmentent le bonheur et la valeur foncière, et absorbent une partie de la pollution.' },
+  air: { title: 'Pollution de l’air', unit: 'indice 0 à 100 %', items: [['#fde68a', 'Faible'], ['#fbbf24', 'Modérée'], ['#f97316', 'Forte'], ['#dc2626', 'Très forte'], ['#7f1d1d', 'Dangereuse']], explanation: 'Émise par l’industrie, les centrales et le trafic. Elle rend des habitants malades et fait baisser la valeur foncière.' },
+  noise: { title: 'Pollution sonore', unit: 'indice 0 à 100 %', items: [['#fde68a', 'Faible'], ['#fbbf24', 'Modérée'], ['#f97316', 'Forte'], ['#dc2626', 'Très forte'], ['#7f1d1d', 'Insupportable']], explanation: 'Due aux routes chargées (surtout les autoroutes), à l’industrie et aux commerces.' },
+  crime: { title: 'Délinquance', unit: 'risque 0 à 100 %', items: [['#22c55e', 'Faible'], ['#a3e635', 'Modérée'], ['#facc15', 'Notable'], ['#f97316', 'Forte'], ['#ef4444', 'Très forte']], explanation: 'Calculée à partir du chômage, de la valeur foncière, de la présence de la police et des délits non élucidés.' },
+  happiness: { title: 'Bonheur', unit: '0 à 100 %', items: [['#ef4444', 'Très mécontent'], ['#f97316', 'Mécontent'], ['#facc15', 'Neutre'], ['#a3e635', 'Satisfait'], ['#22c55e', 'Très satisfait']], explanation: 'Combine réseaux, services, pollution, délinquance, espaces verts, impôts et météo.' },
+  land: { title: 'Valeur foncière', unit: 'indice relatif', items: [['#ef4444', 'Très basse'], ['#f97316', 'Basse'], ['#facc15', 'Moyenne'], ['#a3e635', 'Élevée'], ['#22c55e', 'Très élevée']], explanation: 'Augmente avec l’eau, la verdure, les services et les voies piétonnes ; baisse près de l’industrie, des autoroutes et de la pollution.' },
+};
+
 const RAMP = ['#ef4444', '#f97316', '#facc15', '#a3e635', '#22c55e'];
 
 /** Vues de données : colore les cases selon le trafic, les réseaux, la couverture, le bonheur… */
@@ -50,6 +85,8 @@ export class DataView {
   mode: ViewMode = 'none';
   onChange?: (mode: ViewMode) => void;
   private last = 0;
+  /** Date (texte) de la dernière mise à jour de la carte. */
+  updatedAt = '';
   private colors = new Map<string, THREE.Color>();
 
   constructor(private sim: Simulation) {
@@ -91,6 +128,10 @@ export class DataView {
     this.coverCache = cover;
   }
 
+  get legend(): Legend | null {
+    return this.mode === 'none' ? null : LEGENDS[this.mode];
+  }
+
   update(time: number): void {
     if (this.mode === 'transport' && time - this.last >= 0.5) this.buildCover();
     if (this.mode === 'none' || time - this.last < 0.5) return;
@@ -114,9 +155,13 @@ export class DataView {
         else if (built) add(ut.hasUtility(idx, u) ? '#22c55e' : '#ef4444', idx);
       } else if (COV[m]) {
         const [bit, svc] = COV[m]!;
-        if (w.service[idx] === svc) add('#ffffff', idx);
-        else if (ut.coverage[idx] & bit) add(SERVICE_INFO[svc as Exclude<Service, 0>].color, idx);
+        if (w.service[idx] === svc) {
+          const L = ut.loads.get(idx);
+          add(L && L.capacity ? LOAD(L.used / L.capacity) : '#ffffff', idx);
+        } else if (ut.coverage[idx] & bit) add(SERVICE_INFO[svc as Exclude<Service, 0>].color, idx);
         else if (built) add('#7f1d1d', idx);
+      } else if (m === 'crime') {
+        if (built) add(RAMP[4 - Math.max(0, Math.min(4, Math.floor(ut.crime[idx] * 5)))], idx);
       } else if (m === 'happiness') {
         if (built) add(ramp(ut.happiness[idx]), idx);
       } else if (m === 'air' || m === 'noise') {
@@ -129,5 +174,7 @@ export class DataView {
       }
     }
     this.overlay.set([...layers].map(([hex, tiles]) => [tiles, this.c(hex)] as [number[], THREE.Color]));
+    const d = this.sim.date;
+    this.updatedAt = `${d.day}/${d.month + 1} an ${d.year}`;
   }
 }

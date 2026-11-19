@@ -1,4 +1,5 @@
 import type { World } from './World';
+import { computeReach, ROAD_SERVICES, type FacilityLoad, type ReachStats } from './ServiceReach';
 import { BuildState, Zone } from './zones';
 import {
   CONSUMPTION, Coverage, SERVICE_INFO, Service, UTILITIES, Utility, type BudgetKey,
@@ -53,6 +54,14 @@ export class Utilities {
   budget: (key: BudgetKey) => number = () => 1;
   /** Ajustement global du bonheur (impôts…). */
   happinessOffset = 0;
+  /** Part d'élèves et de malades dans la population (fournie par la démographie). */
+  studentShare = 0.25;
+  sickShare = 0.025;
+  /** Occupation de chaque école ou clinique, et bilan global. */
+  loads = new Map<number, FacilityLoad>();
+  reach: ReachStats = { students: 0, seats: 0, unschooled: 0, patients: 0, beds: 0, untreated: 0 };
+  /** Risque de délinquance par case (0 à 1), calculé par la simulation. */
+  readonly crime: Float32Array = new Float32Array(0);
   /** Multiplicateurs de consommation (saison, météo). */
   consumptionMul = [1, 1, 1, 1];
   stats: UtilityStats = { supply: [0, 0, 0, 0], demand: [0, 0, 0, 0], served: [0, 0, 0, 0], happiness: 0, coverage: {}, burning: 0, air: 0, noise: 0 };
@@ -66,6 +75,7 @@ export class Utilities {
     this.problemDays = new Uint16Array(n);
     this.fire = new Uint8Array(n);
     this.air = new Float32Array(n);
+    (this as { crime: Float32Array }).crime = new Float32Array(n);
     this.noise = new Float32Array(n);
     this.component = new Int32Array(n);
   }
@@ -179,7 +189,7 @@ export class Utilities {
         if (net >= 0) get(supply, net)[info.utility] += cap;
         totalSupply[info.utility] += cap;
       }
-      if (info.coverage && info.radius) {
+      if (info.coverage && info.radius && !ROAD_SERVICES.includes(s)) {
         const r = Math.round(info.radius * (0.55 + 0.45 * this.budget(info.budget))), r2 = r * r;
         for (let b = Math.max(0, j - r); b <= Math.min(n - 1, j + r); b++) {
           for (let a = Math.max(0, i - r); a <= Math.min(n - 1, i + r); a++) {
@@ -197,6 +207,12 @@ export class Utilities {
         }
       }
     }
+
+    // Santé, éducation, police, pompiers : portée par la route et capacités réelles
+    const reach = computeReach(w, this.access, this.capacity, (svc) => this.budget(SERVICE_INFO[svc as Exclude<Service, 0>].budget),
+      this.trafficDensity, this.studentShare, this.sickShare, this.coverage);
+    this.loads = reach.loads;
+    this.reach = reach.stats;
 
     // Consommation par réseau
     const buildingNet = new Int32Array(w.bState.length).fill(-1);
@@ -255,6 +271,7 @@ export class Utilities {
       if (cov & Coverage.Park) h += 0.07;
       h -= this.nuisance[idx];
       h -= Math.min(0.35, this.air[idx] * 0.45 + this.noise[idx] * 0.25);
+      h -= this.crime[idx] * 0.18;
       h += this.happinessOffset;
       if (this.fire[idx]) h -= 0.3;
       h = Math.max(0, Math.min(1, h));

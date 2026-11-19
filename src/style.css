@@ -348,3 +348,33 @@ button.ghost.big:disabled { opacity: 0.4; cursor: default; }
 .road-modes { display: flex; gap: 2px; background: rgba(255,255,255,0.05); border-radius: 8px; padding: 2px; text-transform: none; letter-spacing: 0; }
 .road-modes button { display: block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
 .road-modes button.active { background: var(--accent); color: var(--bg-solid); }
+
+/* ---- Étape 8 : conseiller, légende, indicateurs ---- */
+.stat.clickable { cursor: pointer; border-radius: 8px; padding: 2px 6px; margin: -2px -6px; }
+.stat.clickable:hover { background: rgba(255,255,255,0.07); }
+.badge.sev-critical { background: #ef4444; }
+.badge.sev-serious { background: #f97316; }
+.badge.sev-warning { background: #eab308; color: #1a1a1a; }
+.badge.sev-good { background: #22c55e; }
+.advisor { position: absolute; top: 78px; right: 12px; width: 380px; max-height: calc(100vh - 200px); display: flex; flex-direction: column; z-index: 4; }
+.adv-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px 8px; }
+.adv-head button { font-size: 20px; color: var(--muted); }
+.adv-list { overflow: auto; padding: 0 10px 10px; display: flex; flex-direction: column; gap: 8px; }
+.issue { padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,0.04); border-left: 4px solid var(--sev); font-size: 12.5px; }
+.issue.sev-critical { --sev: #ef4444; } .issue.sev-serious { --sev: #f97316; } .issue.sev-warning { --sev: #eab308; } .issue.sev-good { --sev: #22c55e; }
+.issue-top { display: flex; justify-content: space-between; align-items: center; }
+.sev { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--sev); }
+.sev i { width: 10px; height: 10px; border-radius: 50%; background: var(--sev); box-shadow: 0 0 0 3px color-mix(in srgb, var(--sev) 25%, transparent); }
+.issue h4 { margin: 6px 0 4px; font-size: 14px; }
+.issue .lbl { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-top: 6px; }
+.issue ul { margin: 3px 0 0; padding-left: 18px; line-height: 1.45; }
+.issue ul.acts li::marker { color: var(--accent); }
+button.ghost.small { padding: 4px 8px; font-size: 11.5px; }
+.legend { position: absolute; right: 12px; bottom: 16px; width: 270px; padding: 12px 14px; font-size: 12.5px; z-index: 3; }
+.lg-title { font-weight: 700; font-size: 14px; }
+.lg-unit { color: var(--muted); font-size: 11.5px; margin-bottom: 6px; }
+.legend ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.legend li { display: flex; align-items: center; gap: 8px; }
+.legend li i { width: 14px; height: 10px; border-radius: 3px; flex: none; }
+.legend p { margin: 8px 0 4px; color: var(--muted); line-height: 1.45; }
+.lg-date { font-size: 11px; color: var(--muted); }
