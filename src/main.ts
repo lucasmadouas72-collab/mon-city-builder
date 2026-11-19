@@ -6,6 +6,7 @@ import { SceneRenderer } from './render/SceneRenderer';
 import { TrafficView } from './render/TrafficView';
 import { DataView } from './render/DataView';
 import { ServiceLayer } from './render/ServiceLayer';
+import { TransitView } from './render/TransitView';
 import { Simulation } from './sim/Simulation';
 import { World } from './sim/World';
 import { Hud } from './ui/Hud';
@@ -21,7 +22,10 @@ const tools = new ToolManager(sim, view, cam, view.renderer.domElement);
 const trafficView = new TrafficView(world, sim.traffic);
 const dataView = new DataView(sim);
 const services = new ServiceLayer(world, sim.utilities);
-view.scene.add(trafficView.group, dataView.overlay.group, services.group);
+const transitView = new TransitView(world, sim.transit);
+view.scene.add(trafficView.group, dataView.overlay.group, services.group, transitView.group);
+tools.onDraft = (kind, tiles) => transitView.setDraft(kind, tiles);
+sim.events.on('transitChanged', () => transitView.rebuild());
 new Hud(document.getElementById('hud')!, sim, tools, dataView);
 tools.setTool('road');
 
@@ -30,7 +34,7 @@ sim.events.on('roadsChanged', () => {
   view.buildings.markChanged([]);
   services.rebuild();
 });
-sim.events.on('servicesChanged', () => services.rebuild());
+sim.events.on('servicesChanged', () => { services.rebuild(); transitView.rebuild(); });
 sim.events.on('firesChanged', () => services.refreshFires());
 sim.events.on('zonesChanged', () => view.refreshZones(world));
 sim.events.on('buildingsChanged', ({ tiles }) => {
@@ -49,6 +53,7 @@ function frame(now: number) {
   trafficView.update();
   dataView.update(now / 1000);
   services.update(now / 1000);
+  transitView.visible = dataView.mode === 'transport' || tools.tool === 'busline' || tools.tool === 'metroline' || tools.tool === 'busstop';
   view.render(now / 1000);
   requestAnimationFrame(frame);
 }
@@ -56,4 +61,4 @@ requestAnimationFrame(frame);
 document.getElementById('loading')?.remove();
 
 // Accès console pour le débogage
-Object.assign(window, { game: { world, sim, view, cam, tools, trafficView, dataView, services } });
+Object.assign(window, { game: { world, sim, view, cam, tools, trafficView, dataView, services, transitView } });

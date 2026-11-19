@@ -36,11 +36,11 @@ kbd {
 
 .topbar {
   position: absolute; top: 12px; left: 12px; right: 12px; height: 54px;
-  display: flex; align-items: center; gap: 22px; padding: 0 10px 0 16px;
+  display: flex; align-items: center; gap: 18px; padding: 0 10px 0 16px; white-space: nowrap;
 }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 17px; letter-spacing: 0.2px; }
 .logo { width: 26px; height: 26px; border-radius: 8px; background: linear-gradient(135deg, #2dd4a7, #167a6b); box-shadow: inset 0 -6px 0 rgba(0,0,0,0.15); }
-.stat { display: flex; flex-direction: column; line-height: 1.15; }
+.stat { display: flex; flex-direction: column; line-height: 1.15; white-space: nowrap; }
 .stat .label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
 .stat .value { font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; }
 .stat .value.negative { color: var(--bad); }
@@ -180,3 +180,47 @@ kbd {
 .info .u.ok { background: var(--c); color: #111; }
 .info .u.ko { background: rgba(248,113,113,0.2); color: var(--bad); text-decoration: line-through; }
 @media (max-width: 1100px) { .status { display: none; } }
+
+/* ---- Phase 5 : budget, paliers, transports ---- */
+.stat-btn { text-align: left; padding: 4px 8px; margin: 0 -8px; border-radius: 8px; }
+.stat-btn:hover { background: rgba(255,255,255,0.07); }
+.milestone { display: flex; flex-direction: column; gap: 4px; min-width: 110px; cursor: default; }
+.ms-name { font-size: 12.5px; font-weight: 700; }
+.ms-bar { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.1); overflow: hidden; }
+.ms-bar i { display: block; height: 100%; background: linear-gradient(90deg, #2dd4a7, #a7f3d0); transition: width 0.5s; }
+
+.modal-wrap { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(8, 14, 20, 0.45); z-index: 20; padding: 16px; }
+.modal { max-height: calc(100vh - 32px); overflow: auto; padding: 18px 20px; }
+.modal h2 { margin: 0; font-size: 19px; }
+.modal h3 { margin: 16px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.modal .hint { margin: 0 0 8px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.budget { width: min(920px, 100%); }
+.budget header { display: flex; justify-content: space-between; align-items: center; }
+.budget .close { font-size: 24px; color: var(--muted); }
+.budget-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+@media (max-width: 800px) { .budget-grid { grid-template-columns: 1fr; } }
+.slider { display: grid; grid-template-columns: 110px 1fr 46px; align-items: center; gap: 10px; font-size: 13px; padding: 3px 0; }
+.slider b { text-align: right; font-variant-numeric: tabular-nums; }
+.slider input { accent-color: var(--c, var(--accent)); width: 100%; }
+.ledger { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ledger td { padding: 4px 0; border-bottom: 1px solid var(--line); }
+.ledger td:last-child { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.ledger .pos { color: var(--accent); }
+.ledger .neg, .neg { color: var(--bad); }
+.ledger .total td { border-bottom: 0; padding-top: 8px; font-weight: 800; font-size: 14px; }
+.ledger .muted { color: var(--muted); }
+.budget .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.budget .row small { display: block; color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+.budget .sub-title { font-size: 11.5px; color: var(--muted); margin-top: 6px; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 7px; }
+button.ghost { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); font-size: 12px; font-weight: 600; white-space: nowrap; }
+button.ghost:hover { background: rgba(255,255,255,0.06); }
+button.ghost.danger { color: var(--bad); }
+button.primary { margin-top: 14px; padding: 9px 18px; border-radius: 10px; background: var(--accent); color: var(--bg-solid); font-weight: 700; }
+.ms-modal { text-align: center; width: min(400px, 100%); padding: 26px; }
+.ms-kicker { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--accent); font-weight: 700; }
+.ms-modal h2 { font-size: 28px; margin: 6px 0 10px; }
+.ms-modal p { color: var(--muted); line-height: 1.6; margin: 0; }
+.ms-modal p b { color: var(--text); }
+@media (max-width: 1250px) { .milestone { display: none; } }
+@media (max-width: 1400px) { .topbar .stat:nth-of-type(4) { display: none; } .date { font-size: 13px; } }

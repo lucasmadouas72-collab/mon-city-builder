@@ -35,6 +35,8 @@ export class World {
   readonly roadDist: Uint8Array;
   /** Bâtiment de service présent sur la case (Service.None sinon). */
   readonly service: Uint8Array;
+  /** Arrêt de bus sur une case de route. */
+  readonly busStop: Uint8Array;
 
   constructor(seed = 1337) {
     this.seed = seed;
@@ -49,6 +51,7 @@ export class World {
     this.bTimer = new Uint16Array(n * n);
     this.roadDist = new Uint8Array(n * n).fill(255);
     this.service = new Uint8Array(n * n);
+    this.busStop = new Uint8Array(n * n);
     this.generate();
   }
 

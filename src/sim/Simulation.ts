@@ -6,6 +6,12 @@ import { rng } from '../core/noise';
 import { Tile, World } from './World';
 import { Traffic } from './Traffic';
 import { Utilities } from './Utilities';
+import { Transit, type TransitKind } from './Transit';
+import {
+  BUDGET_KEYS, BUS_STOP_COST, BUS_UNLOCK, BUS_UPKEEP, DEFAULT_TAX, LOAN_OFFERS, MAX_LOANS, MAX_TAX, METRO_LINE_UPKEEP,
+  MILESTONES, MIN_TAX, TICKET_PRICE, defaultBudgets, defaultTaxes, loanPayment, milestoneIndex, type Loan,
+} from './economy';
+import type { BudgetKey } from './services';
 import { ABANDON_DAYS, Coverage, SERVICE_INFO, Service, Utility } from './services';
 import { BuildState, Zone, ZONE_DEPTH, ZONE_INFO, type ZoneType } from './zones';
 
@@ -29,6 +35,9 @@ export interface CityStats {
   demand: Record<ZoneType, number>;
   income: number;
   expenses: number;
+  /** Détail mensuel des recettes et dépenses. */
+  incomeBy: Record<string, number>;
+  expensesBy: Record<string, number>;
 }
 
 const zeroByZone = (): Record<ZoneType, number> => ({ [Zone.Residential]: 0, [Zone.Commercial]: 0, [Zone.Industrial]: 0, [Zone.Office]: 0 });
@@ -45,8 +54,15 @@ export class Simulation {
   roadCount = 0;
   stats: CityStats = {
     population: 0, jobs: zeroByZone(), totalJobs: 0, workers: 0, buildings: 0,
-    demand: zeroByZone(), income: 0, expenses: 0,
+    demand: zeroByZone(), income: 0, expenses: 0, incomeBy: {}, expensesBy: {},
   };
+  taxes = defaultTaxes();
+  budgets = defaultBudgets();
+  loans: Loan[] = [];
+  /** Population maximale atteinte (les déblocages ne se perdent pas). */
+  maxPop = 0;
+  milestone = 0;
+  private lastPassengers = 0;
 
   private dayProgress = 0;
   private accumulator = 0;
@@ -57,12 +73,15 @@ export class Simulation {
 
   readonly traffic: Traffic;
   readonly utilities: Utilities;
+  readonly transit: Transit;
   private lastUtilityHint = -999;
 
   constructor(world: World) {
     this.world = world;
     this.traffic = new Traffic(world);
     this.utilities = new Utilities(world, (idx) => this.traffic.roadAccess(idx), (idx) => this.capacity(idx));
+    this.utilities.budget = (k) => this.budgets[k] / 100;
+    this.transit = new Transit(world, this.traffic);
     this.recomputeStats();
   }
 
@@ -81,7 +100,59 @@ export class Simulation {
   }
 
   isUnlocked(zone: ZoneType): boolean {
-    return this.stats.population >= ZONE_INFO[zone].unlockPop;
+    return this.maxPop >= ZONE_INFO[zone].unlockPop;
+  }
+
+  isServiceUnlocked(s: Service): boolean {
+    return this.maxPop >= SERVICE_INFO[s as Exclude<Service, Service.None>].unlockPop;
+  }
+
+  get busUnlocked(): boolean {
+    return this.maxPop >= BUS_UNLOCK;
+  }
+
+  // ---------- Économie ----------
+
+  setTax(zone: ZoneType, rate: number): void {
+    this.taxes[zone] = Math.round(clamp(rate, MIN_TAX, MAX_TAX));
+    this.recomputeStats();
+  }
+
+  setBudget(key: BudgetKey, pct: number): void {
+    this.budgets[key] = Math.round(clamp(pct, 50, 150) / 5) * 5;
+    if (key === 'transport') { this.transit.budget = this.budgets[key] / 100; this.transit.refreshAll(); }
+    this.recomputeStats();
+  }
+
+  takeLoan(index: number): boolean {
+    const o = LOAN_OFFERS[index];
+    if (!o || this.loans.length >= MAX_LOANS) return false;
+    this.loans.push({ ...o, remaining: o.months, payment: loanPayment(o) });
+    this.money += o.amount;
+    this.events.emit('moneyChanged', this.money);
+    this.recomputeStats();
+    this.events.emit('notify', { text: `Emprunt de ${o.amount.toLocaleString('fr-FR')} € obtenu`, kind: 'info' });
+    return true;
+  }
+
+  /** Remboursement anticipé : capital restant dû. */
+  loanBalance(l: Loan): number {
+    const r = l.rate / 100 / 12;
+    return Math.round((l.payment * (1 - Math.pow(1 + r, -l.remaining))) / r);
+  }
+
+  repayLoan(index: number): boolean {
+    const l = this.loans[index];
+    if (!l) return false;
+    const due = this.loanBalance(l);
+    if (due > this.money) {
+      this.events.emit('notify', { text: 'Fonds insuffisants pour rembourser', kind: 'error' });
+      return false;
+    }
+    this.loans.splice(index, 1);
+    this.spend(due);
+    this.recomputeStats();
+    return true;
   }
 
   /** Avance la simulation d'un temps réel dt (s), par pas fixes. */
@@ -89,7 +160,7 @@ export class Simulation {
     const scaled = Math.min(dt, 0.1) * this.speed;
     // Trafic : pas variable (mouvement fluide), découpé pour rester stable en vitesse rapide
     const sub = Math.ceil(scaled / 0.05);
-    const target = this.traffic.targetVehicles(this.stats.population, this.stats.totalJobs);
+    const target = Math.round(this.traffic.targetVehicles(this.stats.population, this.stats.totalJobs) * (1 - this.traffic.transitShare));
     for (let k = 0; k < sub; k++) this.traffic.update(scaled / sub, target);
     this.accumulator += Math.min(dt, 0.25) * this.speed;
     while (this.accumulator >= SIM_STEP) {
@@ -294,6 +365,7 @@ export class Simulation {
       if (z === Zone.Residential) population += cap;
       else jobs[z] += cap;
     }
+    this.utilities.happinessOffset = -(this.taxes[Zone.Residential] - DEFAULT_TAX) * 0.012;
     this.utilities.compute();
     const totalJobs = jobs[Zone.Commercial] + jobs[Zone.Industrial] + jobs[Zone.Office];
     const workers = Math.round(population * 0.55);
@@ -307,23 +379,61 @@ export class Simulation {
     demand[Zone.Industrial] = clamp((wantI - jobs[Zone.Industrial]) / (wantI * 0.5 + 20));
     const wantO = this.isUnlocked(Zone.Office) ? population * 0.12 : 0;
     demand[Zone.Office] = this.isUnlocked(Zone.Office) ? clamp((wantO - jobs[Zone.Office] + 10) / (wantO * 0.5 + 25)) : 0;
+    // Les impôts élevés freinent la demande, les impôts bas l'encouragent
+    for (const z of [Zone.Residential, Zone.Commercial, Zone.Industrial, Zone.Office] as ZoneType[]) {
+      if (z !== Zone.Office || this.isUnlocked(z)) demand[z] = clamp(demand[z] - (this.taxes[z] - DEFAULT_TAX) * 0.035);
+    }
 
-    let income = population * ZONE_INFO[Zone.Residential].tax;
-    for (const z of [Zone.Commercial, Zone.Industrial, Zone.Office] as const) income += jobs[z] * ZONE_INFO[z].tax;
-    let expenses = this.roadCount * ROAD_UPKEEP_MONTH;
-    for (let k = 0; k < w.service.length; k++) if (w.service[k]) expenses += SERVICE_INFO[w.service[k] as Exclude<Service, Service.None>].upkeep;
+    // Recettes
+    const incomeBy: Record<string, number> = {};
+    incomeBy.residential = population * ZONE_INFO[Zone.Residential].tax * (this.taxes[Zone.Residential] / DEFAULT_TAX);
+    incomeBy.commercial = jobs[Zone.Commercial] * ZONE_INFO[Zone.Commercial].tax * (this.taxes[Zone.Commercial] / DEFAULT_TAX);
+    incomeBy.industrial = jobs[Zone.Industrial] * ZONE_INFO[Zone.Industrial].tax * (this.taxes[Zone.Industrial] / DEFAULT_TAX);
+    incomeBy.office = jobs[Zone.Office] * ZONE_INFO[Zone.Office].tax * (this.taxes[Zone.Office] / DEFAULT_TAX);
+    incomeBy.tickets = this.lastPassengers * TICKET_PRICE;
+
+    // Dépenses
+    const expensesBy: Record<string, number> = { roads: this.roadCount * ROAD_UPKEEP_MONTH };
+    for (const k of BUDGET_KEYS) expensesBy[k] = 0;
+    for (let k = 0; k < w.service.length; k++) {
+      if (!w.service[k]) continue;
+      const info = SERVICE_INFO[w.service[k] as Exclude<Service, Service.None>];
+      expensesBy[info.budget] += info.upkeep * (this.budgets[info.budget] / 100);
+    }
+    let stops = 0;
+    for (let k = 0; k < w.busStop.length; k++) stops += w.busStop[k];
+    expensesBy.transport += (this.transit.busCount * BUS_UPKEEP + stops * 10 + this.transit.metroLines * METRO_LINE_UPKEEP) * (this.budgets.transport / 100);
+    expensesBy.loans = this.loans.reduce((sum, l) => sum + l.payment, 0);
+    for (const k in incomeBy) incomeBy[k] = Math.round(incomeBy[k]);
+    for (const k in expensesBy) expensesBy[k] = Math.round(expensesBy[k]);
+    const income = Object.values(incomeBy).reduce((a, b) => a + b, 0);
+    const expenses = Object.values(expensesBy).reduce((a, b) => a + b, 0);
 
     this.traffic.refreshBuildings((idx) => this.capacity(idx));
     const prevPop = this.stats.population;
-    this.stats = { population, jobs, totalJobs, workers, buildings, demand, income: Math.round(income), expenses: Math.round(expenses) };
-    this.events.emit('statsChanged', this.stats);
-    if (prevPop < ZONE_INFO[Zone.Office].unlockPop && population >= ZONE_INFO[Zone.Office].unlockPop) {
-      this.events.emit('notify', { text: 'Nouvelle zone débloquée : Bureaux', kind: 'info' });
+    void prevPop;
+    this.stats = { population, jobs, totalJobs, workers, buildings, demand, income, expenses, incomeBy, expensesBy };
+    if (population > this.maxPop) this.maxPop = population;
+    const m = milestoneIndex(this.maxPop);
+    if (m > this.milestone) {
+      for (let k = this.milestone + 1; k <= m; k++) {
+        const ms = MILESTONES[k];
+        this.money += ms.reward;
+        this.events.emit('milestone', { index: k });
+      }
+      this.milestone = m;
+      this.events.emit('moneyChanged', this.money);
     }
+    this.events.emit('statsChanged', this.stats);
   }
 
   private onNewMonth(): void {
+    this.lastPassengers = this.transit.onNewMonth();
+    for (const l of this.loans) l.remaining--;
+    const done = this.loans.filter((l) => l.remaining <= 0).length;
+    if (done) this.events.emit('notify', { text: 'Emprunt entièrement remboursé', kind: 'info' });
     this.recomputeStats();
+    this.loans = this.loans.filter((l) => l.remaining > 0);
     const net = this.stats.income - this.stats.expenses;
     if (net !== 0) {
       this.money += net;
@@ -402,6 +512,7 @@ export class Simulation {
   private onRoadsChanged(tiles: number[]): void {
     this.world.computeRoadDist();
     this.traffic.validate();
+    this.transit.refreshAll();
     this.recomputeStats();
     this.events.emit('roadsChanged', { tiles });
   }
@@ -456,6 +567,9 @@ export class Simulation {
     const w = this.world;
     const i = idx % w.size, j = Math.floor(idx / w.size);
     const info = SERVICE_INFO[type as Exclude<Service, Service.None>];
+    if (!this.isServiceUnlocked(type)) {
+      return { ok: false, reason: `Débloqué à ${info.unlockPop.toLocaleString('fr-FR')} habitants`, cost: info.cost };
+    }
     const reason = w.serviceBlocker(i, j, type);
     if (reason) return { ok: false, reason, cost: info.cost };
     if (info.cost > this.money) return { ok: false, reason: 'Fonds insuffisants', cost: info.cost };
@@ -481,6 +595,40 @@ export class Simulation {
     if (hadBuilding) this.events.emit('buildingsChanged', { tiles: [idx] });
     this.events.emit('notify', { text: `${SERVICE_INFO[type as Exclude<Service, Service.None>].name} construit(e)`, kind: 'info' });
     return true;
+  }
+
+  // ---------- Transports en commun ----------
+
+  placeBusStop(idx: number): boolean {
+    const w = this.world;
+    if (!this.busUnlocked) { this.events.emit('notify', { text: `Bus débloqués à ${BUS_UNLOCK.toLocaleString('fr-FR')} habitants`, kind: 'warn' }); return false; }
+    if (w.tiles[idx] !== Tile.Road) { this.events.emit('notify', { text: 'Un arrêt se place sur une route', kind: 'warn' }); return false; }
+    if (w.busStop[idx]) return false;
+    if (this.money < BUS_STOP_COST) { this.events.emit('notify', { text: 'Fonds insuffisants', kind: 'error' }); return false; }
+    w.busStop[idx] = 1;
+    this.spend(BUS_STOP_COST);
+    this.events.emit('transitChanged', undefined);
+    return true;
+  }
+
+  createLine(kind: TransitKind, stops: number[]): boolean {
+    const line = this.transit.addLine(kind, stops);
+    if (!line) return false;
+    if (line.broken) {
+      this.transit.removeLine(line.id);
+      this.events.emit('notify', { text: 'Ligne impossible : les arrêts ne sont pas reliés par la route', kind: 'warn' });
+      return false;
+    }
+    this.recomputeStats();
+    this.events.emit('transitChanged', undefined);
+    this.events.emit('notify', { text: `${line.name} créée (${line.stops.length} arrêts)`, kind: 'info' });
+    return true;
+  }
+
+  removeLine(id: number): void {
+    this.transit.removeLine(id);
+    this.recomputeStats();
+    this.events.emit('transitChanged', undefined);
   }
 
   // ---------- Démolition ----------
@@ -521,6 +669,7 @@ export class Simulation {
     for (const idx of est.tiles) {
       if (w.tiles[idx] === Tile.Road) {
         w.tiles[idx] = Tile.Empty;
+        w.busStop[idx] = 0;
         roads.push(idx);
       } else if (w.service[idx]) {
         w.service[idx] = Service.None;
@@ -542,8 +691,10 @@ export class Simulation {
     }
     if (trees) this.events.emit('treesChanged', undefined);
     if (services) {
+      this.transit.refreshAll();
       this.recomputeStats();
       this.events.emit('servicesChanged', undefined);
     }
+    if (roads.length || services) this.events.emit('transitChanged', undefined);
   }
 }

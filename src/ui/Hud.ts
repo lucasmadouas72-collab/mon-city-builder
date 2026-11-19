@@ -1,5 +1,7 @@
 import { GAME_NAME } from '../config';
-import { fmt, toolService, type HoverInfo, type ToolId, type ToolManager, type Tooltip } from '../input/ToolManager';
+import { BudgetPanel } from './BudgetPanel';
+import { BUS_STOP_COST, BUS_UNLOCK, MILESTONES } from '../sim/economy';
+import { fmt, type HoverInfo, type ToolId, type ToolManager, type Tooltip } from '../input/ToolManager';
 import type { CityStats, Simulation } from '../sim/Simulation';
 import { TrafficView } from '../render/TrafficView';
 import { VIEW_LABELS, type DataView, type ViewMode } from '../render/DataView';
@@ -17,6 +19,7 @@ const ICONS: Record<string, string> = {
   zone: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 12h16M12 4v16" opacity=".5"/>',
   dezone: '<rect x="4" y="4" width="16" height="16" rx="2" stroke-dasharray="3 3"/><path d="M9 9l6 6M15 9l-6 6"/>',
   utilities: '<path d="M13 2L5 14h6l-1 8 8-12h-6z"/>',
+  transport: '<rect x="5" y="3" width="14" height="14" rx="3"/><path d="M5 11h14"/><circle cx="8.5" cy="14" r="1"/><circle cx="15.5" cy="14" r="1"/><path d="M7 17l-1.5 3M17 17l1.5 3"/>',
   services: '<path d="M3 21h18M5 21V10l7-5 7 5v11"/><path d="M10 21v-5h4v5"/>',
   layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5" opacity=".6"/>',
   pause: '<path d="M8 5v14M16 5v14"/>',
@@ -28,7 +31,7 @@ const ICONS: Record<string, string> = {
 const icon = (name: string) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
 
-interface ToolDef { id: ToolId; label: string; key?: string; color?: string; zone?: ZoneType; sub?: string }
+interface ToolDef { id: ToolId; label: string; key?: string; color?: string; zone?: ZoneType; sub?: string; unlock?: number; desc?: string }
 type Group = { id: string; label: string; icon: string; key?: string; tools: ToolDef[] };
 
 const ZONE_TOOLS: ToolDef[] = [
@@ -38,11 +41,18 @@ const ZONE_TOOLS: ToolDef[] = [
   { id: 'zoneO', label: 'Bureaux', key: '6', zone: Zone.Office, color: ZONE_INFO[Zone.Office].color, sub: 'Emplois qualifiés' },
   { id: 'dezone', label: 'Dézoner', key: '7', color: '#fb923c', sub: 'Retire la zone' },
 ];
-const svcTools = (cat: 'utilities' | 'services'): ToolDef[] =>
+const svcTools = (cat: 'utilities' | 'services' | 'transport'): ToolDef[] =>
   SERVICES.filter((s) => SERVICE_INFO[s].category === cat).map((s) => ({
     id: `svc${s}` as ToolId, label: SERVICE_INFO[s].name, color: SERVICE_INFO[s].color,
     sub: `${fmt(SERVICE_INFO[s].cost)} · ${fmt(SERVICE_INFO[s].upkeep)}/mois`,
+    unlock: SERVICE_INFO[s].unlockPop, desc: SERVICE_INFO[s].description,
   }));
+const TRANSPORT_TOOLS: ToolDef[] = [
+  { id: 'busstop', label: 'Arrêt de bus', color: '#22c55e', sub: `${fmt(BUS_STOP_COST)} · sur une route`, unlock: BUS_UNLOCK, desc: 'Placez des arrêts sur les routes, puis reliez-les par une ligne.' },
+  { id: 'busline', label: 'Ligne de bus', color: '#16a34a', sub: `${fmt(60)}/mois par bus`, unlock: BUS_UNLOCK, desc: "Cliquez sur les arrêts dans l'ordre, puis sur le premier pour fermer la boucle." },
+  ...svcTools('transport'),
+  { id: 'metroline', label: 'Ligne de métro', color: '#c026d3', sub: `${fmt(400)}/mois`, unlock: 3000, desc: "Cliquez sur les stations dans l'ordre, puis sur la première pour fermer la boucle." },
+];
 
 const GROUPS: Group[] = [
   { id: 'select', label: 'Sélection', icon: 'select', key: '1', tools: [{ id: 'select', label: 'Sélection' }] },
@@ -50,6 +60,7 @@ const GROUPS: Group[] = [
   { id: 'zones', label: 'Zones', icon: 'zone', tools: ZONE_TOOLS },
   { id: 'utilities', label: 'Réseaux', icon: 'utilities', tools: svcTools('utilities') },
   { id: 'services', label: 'Services', icon: 'services', tools: svcTools('services') },
+  { id: 'transport', label: 'Transports', icon: 'transport', tools: TRANSPORT_TOOLS },
   { id: 'bulldoze', label: 'Démolir', icon: 'bulldoze', key: '8', tools: [{ id: 'bulldoze', label: 'Démolir' }] },
 ];
 
@@ -61,12 +72,13 @@ const KEYED: ToolDef[] = [
 export class Hud {
   private el = (sel: string) => this.root.querySelector(sel) as HTMLElement;
   private openGroup: string | null = null;
+  private budget!: BudgetPanel;
 
   constructor(private root: HTMLElement, private sim: Simulation, private tools: ToolManager, views: DataView) {
     root.innerHTML = `
       <header class="topbar panel">
         <div class="brand"><span class="logo"></span>${GAME_NAME}</div>
-        <div class="stat"><span class="label">Budget</span><span class="value" id="money"></span></div>
+        <button class="stat stat-btn" id="budget-btn" title="Ouvrir le budget (B)"><span class="label">Budget</span><span class="value" id="money"></span></button>
         <div class="stat"><span class="label">Solde / mois</span><span class="value" id="balance"></span></div>
         <div class="stat"><span class="label">Population</span><span class="value" id="pop">0</span></div>
         <div class="stat"><span class="label">Emplois</span><span class="value" id="jobs">0</span></div>
@@ -76,6 +88,7 @@ export class Hud {
           ${ZONES.map((z) => `<div class="bar" data-zone="${z}" style="--c:${ZONE_INFO[z].color}"><div class="track"><i></i></div><span>${ZONE_INFO[z].short}</span></div>`).join('')}
         </div>
         <div class="spacer"></div>
+        <div class="milestone" id="milestone" title=""><span class="ms-name"></span><div class="ms-bar"><i></i></div></div>
         <div class="views">
           <button id="views-btn" title="Vues de données (T : trafic)">${icon('layers')}<span id="views-label">Vues</span></button>
           <div class="views-menu panel" id="views-menu" hidden>
@@ -100,6 +113,7 @@ export class Hud {
       </nav>
       <aside class="info panel" id="info" hidden></aside>
       <div class="tooltip" id="tooltip" hidden></div>
+      <div class="modal-wrap" id="ms-popup" hidden><div class="modal panel ms-modal"><div class="ms-kicker">Nouveau palier</div><h2 id="ms-title"></h2><p id="ms-text"></p><button class="primary" id="ms-ok">Continuer</button></div></div>
       <div class="toasts" id="toasts"></div>
       <div class="help panel" id="help">
         <b>Pour bien démarrer</b>
@@ -131,6 +145,15 @@ export class Hud {
       if (b?.dataset.view) { views.set(b.dataset.view as ViewMode); this.el('#views-menu').hidden = true; }
     });
     views.onChange = (m) => this.updateViews(m);
+    this.budget = new BudgetPanel(root, sim);
+    this.el('#budget-btn').addEventListener('click', () => this.budget.toggle());
+    this.el('#ms-ok').addEventListener('click', () => (this.el('#ms-popup').hidden = true));
+    sim.events.on('milestone', ({ index }) => {
+      const ms = MILESTONES[index];
+      this.el('#ms-title').textContent = ms.name;
+      this.el('#ms-text').innerHTML = `Votre ville atteint ${ms.pop.toLocaleString('fr-FR')} habitants.<br>Débloqué : <b>${ms.unlocks}</b>.<br>Subvention : <b>+${fmt(ms.reward)}</b>.`;
+      this.el('#ms-popup').hidden = false;
+    });
     setInterval(() => this.updateTraffic(), 500);
 
     let lastSpeed = 1;
@@ -139,7 +162,9 @@ export class Hud {
         e.preventDefault();
         if (sim.speedIndex > 0) { lastSpeed = sim.speedIndex; sim.setSpeed(0); } else sim.setSpeed(lastSpeed);
       }
+      if ((e.target as HTMLElement).tagName === 'INPUT') return;
       if (e.code === 'KeyT') views.set('traffic');
+      if (e.code === 'KeyB') this.budget.toggle();
       const t = KEYED.find((t) => e.code === `Digit${t.key}` || e.code === `Numpad${t.key}`);
       if (t) tools.setTool(t.id);
     });
@@ -175,12 +200,12 @@ export class Hud {
     if (!g) { fly.hidden = true; return; }
     fly.hidden = false;
     fly.innerHTML = `<div class="fly-title">${g.label}</div>` + g.tools.map((t) => {
-      const svc = toolService(t.id);
-      const locked = t.zone ? !this.sim.isUnlocked(t.zone) : false;
-      const desc = svc ? SERVICE_INFO[svc as Exclude<Service, 0>].description : t.zone ? `${t.sub}` : t.sub ?? '';
+      const locked = t.zone ? !this.sim.isUnlocked(t.zone) : t.unlock ? this.sim.maxPop < t.unlock : false;
+      const unlockAt = t.zone ? ZONE_INFO[t.zone].unlockPop : t.unlock ?? 0;
+      const desc = t.desc ?? t.sub ?? '';
       return `<button data-tool="${t.id}" class="${t.id === this.tools.tool ? 'active' : ''} ${locked ? 'locked' : ''}" style="--c:${t.color}" title="${desc}">
         <i></i><span class="name">${t.label}${t.key ? ` <kbd>${t.key}</kbd>` : ''}</span>
-        <span class="sub">${locked ? `Débloqué à ${ZONE_INFO[t.zone!].unlockPop} hab.` : t.sub ?? ''}</span></button>`;
+        <span class="sub">${locked ? `Débloqué à ${unlockAt.toLocaleString('fr-FR')} hab.` : t.sub ?? ''}</span></button>`;
     }).join('');
   }
 
@@ -229,7 +254,14 @@ export class Hud {
       const v = us.coverage[Number(row.dataset.c)] ?? 0;
       row.querySelector('b')!.textContent = st.buildings ? `${Math.round(v * 100)} %` : '–';
     });
-    if (this.openGroup === 'zones') this.renderFlyout();
+    if (this.openGroup) this.renderFlyout();
+    const mi = this.sim.milestone, cur = MILESTONES[mi], next = MILESTONES[mi + 1];
+    const msEl = this.el('#milestone');
+    msEl.querySelector('.ms-name')!.textContent = cur.name;
+    const pct = next ? Math.min(1, (this.sim.maxPop - cur.pop) / (next.pop - cur.pop)) : 1;
+    (msEl.querySelector('i') as HTMLElement).style.width = `${pct * 100}%`;
+    msEl.title = next ? `Prochain palier : ${next.name} à ${next.pop.toLocaleString('fr-FR')} habitants (${next.unlocks})` : 'Palier maximal atteint';
+    this.budget.refresh();
   }
 
   private updateViews(mode: ViewMode): void {

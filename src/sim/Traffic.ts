@@ -11,6 +11,7 @@ import { BuildState, Zone } from './zones';
 export const enum VehicleKind {
   Car = 0,
   Truck = 1,
+  Bus = 2,
 }
 
 const LANE = 0.17; // décalage de la voie par rapport à l'axe de la route
@@ -41,6 +42,11 @@ export interface Vehicle {
   /** Carrefour actuellement réservé par le véhicule (-1 si aucun). */
   holding: number;
   age: number;
+  /** Ligne de transport (bus) : boucle sans fin avec arrêts. */
+  line: number;
+  loop: boolean;
+  dwell: number;
+  stops: Set<number> | null;
 }
 
 interface WeightedList {
@@ -100,6 +106,9 @@ export class Traffic {
   tripsCompleted = 0;
   tripsFailed = 0;
   flow = 1;
+  /** Part des trajets faits en transport en commun (moyenne glissante). */
+  transitShare = 0;
+  transitHook?: (a: number, b: number) => boolean;
 
   private nextId = 1;
   private rand = rng(4242);
@@ -181,7 +190,7 @@ export class Traffic {
   // ---------- Itinéraires ----------
 
   /** A* sur les cases de route, pénalisé par la congestion. */
-  findPath(from: number, to: number): number[] | null {
+  findPath(from: number, to: number, ignoreTraffic = false): number[] | null {
     if (from === to) return null;
     const w = this.world;
     const n = w.size;
@@ -208,7 +217,7 @@ export class Traffic {
         if (a < 0 || b < 0 || a >= n || b >= n) continue;
         const k = b * n + a;
         if (w.tiles[k] !== 1) continue;
-        const cost = gc + 1 + Math.min(this.density[k], 6) * 0.6;
+        const cost = gc + 1 + (ignoreTraffic ? 0 : Math.min(this.density[k], 6) * 0.6);
         if (seen[k] === stamp && cost >= g[k]) continue;
         seen[k] = stamp;
         g[k] = cost;
@@ -241,6 +250,11 @@ export class Traffic {
     if (from < 0 || to < 0) return false;
     const a = this.roadAccess(from), b = this.roadAccess(to);
     if (a < 0 || b < 0) return false;
+    if (kind === VehicleKind.Car && this.transitHook) {
+      const byTransit = this.transitHook(a, b);
+      this.transitShare += ((byTransit ? 1 : 0) - this.transitShare) * 0.01;
+      if (byTransit) { this.tripsCompleted++; return false; }
+    }
     const path = this.findPath(a, b);
     if (!path || path.length < 2) {
       if (a !== b) this.tripsFailed++;
@@ -252,11 +266,39 @@ export class Traffic {
       path, seg: 0, t: 0, speed: 0,
       maxSpeed: (kind === VehicleKind.Truck ? TRUCK_SPEED : CAR_SPEED) * (0.9 + this.rand() * 0.2),
       x: 0, z: 0, hx: 1, hz: 0, c: [0, 0, 0, 0, 0, 0], len: 1, wait: 0, holding: -1, age: 0,
+      line: 0, loop: false, dwell: 0, stops: null,
     };
     this.setupSegment(v);
     this.place(v);
     this.vehicles.push(v);
     return true;
+  }
+
+  // ---------- Bus ----------
+
+  addLoopVehicle(line: number, path: number[], start: number, stops: Set<number>, color: string): void {
+    const v: Vehicle = {
+      id: this.nextId++, kind: VehicleKind.Bus, color: parseInt(color.slice(1), 16),
+      path, seg: start % path.length, t: 0, speed: 0, maxSpeed: 1.5,
+      x: 0, z: 0, hx: 1, hz: 0, c: [0, 0, 0, 0, 0, 0], len: 1, wait: 0, holding: -1, age: 0,
+      line, loop: true, dwell: 0, stops,
+    };
+    this.setupSegment(v);
+    this.place(v);
+    this.vehicles.push(v);
+  }
+
+  removeLineVehicles(line: number): void {
+    this.vehicles = this.vehicles.filter((v) => {
+      if (v.line !== line) return true;
+      this.release(v);
+      return false;
+    });
+  }
+
+  private nextTile(v: Vehicle): number {
+    if (v.seg + 1 < v.path.length) return v.path[v.seg + 1];
+    return v.loop ? v.path[0] : -1;
   }
 
   // ---------- Géométrie des trajectoires ----------
@@ -273,15 +315,17 @@ export class Traffic {
     const cur = p[k];
     const ci = cur % n, cj = (cur - ci) / n;
     const cx = ci + 0.5, cz = cj + 0.5;
-    const dIn = k > 0 ? this.dir(p[k - 1], cur) : this.dir(cur, p[k + 1]);
-    const dOut = k < p.length - 1 ? this.dir(cur, p[k + 1]) : dIn;
+    const prev = k > 0 ? p[k - 1] : v.loop ? p[p.length - 1] : -1;
+    const next = k < p.length - 1 ? p[k + 1] : v.loop ? p[0] : -1;
+    const dIn = prev >= 0 ? this.dir(prev, cur) : this.dir(cur, next);
+    const dOut = next >= 0 ? this.dir(cur, next) : dIn;
     // Voie de droite : droite de (dx, dz) = (-dz, dx)
-    const ex = k > 0 ? cx - dIn[0] * 0.5 - dIn[1] * LANE : cx - dIn[1] * LANE;
-    const ez = k > 0 ? cz - dIn[1] * 0.5 + dIn[0] * LANE : cz + dIn[0] * LANE;
-    const ox = k < p.length - 1 ? cx + dOut[0] * 0.5 - dOut[1] * LANE : cx - dOut[1] * LANE;
-    const oz = k < p.length - 1 ? cz + dOut[1] * 0.5 + dOut[0] * LANE : cz + dOut[0] * LANE;
+    const ex = prev >= 0 ? cx - dIn[0] * 0.5 - dIn[1] * LANE : cx - dIn[1] * LANE;
+    const ez = prev >= 0 ? cz - dIn[1] * 0.5 + dIn[0] * LANE : cz + dIn[0] * LANE;
+    const ox = next >= 0 ? cx + dOut[0] * 0.5 - dOut[1] * LANE : cx - dOut[1] * LANE;
+    const oz = next >= 0 ? cz + dOut[1] * 0.5 + dOut[0] * LANE : cz + dOut[0] * LANE;
     let mx: number, mz: number;
-    if (dIn[0] === dOut[0] && dIn[1] === dOut[1]) {
+    if ((dIn[0] === dOut[0] && dIn[1] === dOut[1]) || (dIn[0] === -dOut[0] && dIn[1] === -dOut[1])) {
       mx = (ex + ox) / 2; mz = (ez + oz) / 2;
     } else {
       // Point de contrôle à l'intersection des deux voies (virage arrondi)
@@ -348,10 +392,13 @@ export class Traffic {
   update(dt: number, target: number): void {
     if (dt <= 0) return;
     // Création progressive de nouveaux trajets
-    if (this.vehicles.length < target) {
+    let buses = 0;
+    for (const v of this.vehicles) if (v.loop) buses++;
+    const cars = () => this.vehicles.length - buses;
+    if (cars() < target) {
       this.spawnBudget += dt * (4 + target * 0.08);
       let tries = 0;
-      while (this.spawnBudget >= 1 && this.vehicles.length < target && tries++ < 6) {
+      while (this.spawnBudget >= 1 && cars() < target && tries++ < 6) {
         this.spawnBudget -= 1;
         this.spawn();
       }
@@ -373,7 +420,8 @@ export class Traffic {
       v.age += dt;
       // Distance au véhicule de devant (même sens, sur la case courante ou la suivante)
       let gap = Infinity;
-      const near = [this.buckets.get(v.path[v.seg]), v.seg + 1 < v.path.length ? this.buckets.get(v.path[v.seg + 1]) : undefined];
+      const nt = this.nextTile(v);
+      const near = [this.buckets.get(v.path[v.seg]), nt >= 0 ? this.buckets.get(nt) : undefined];
       for (const list of near) {
         if (!list) continue;
         for (const o of list) {
@@ -391,12 +439,13 @@ export class Traffic {
         }
       }
       let targetSpeed = v.maxSpeed;
-      const len = v.kind === VehicleKind.Truck ? 0.34 : 0.24;
+      const len = v.kind === VehicleKind.Bus ? 0.4 : v.kind === VehicleKind.Truck ? 0.34 : 0.24;
+      if (v.dwell > 0) { v.dwell -= dt; targetSpeed = 0; }
       if (gap < Infinity) targetSpeed *= Math.max(0, Math.min(1, (gap - len) / SAFE_GAP));
 
       // Priorité au carrefour suivant
       const remaining = (1 - v.t) * v.len;
-      const next = v.seg + 1 < v.path.length ? v.path[v.seg + 1] : -1;
+      const next = nt;
       let stopAt = Infinity;
       if (next >= 0 && remaining < 0.4 && v.holding !== next && this.isJunction(next)) {
         const d = this.dir(v.path[v.seg], next);
@@ -420,9 +469,10 @@ export class Traffic {
         const left = (1 - v.t) * v.len;
         if (move < left) { v.t += move / v.len; break; }
         move -= left;
-        if (v.seg >= v.path.length - 1) { alive = false; break; }
+        if (v.seg >= v.path.length - 1 && !v.loop) { alive = false; break; }
         const prevTile = v.path[v.seg];
-        v.seg++;
+        v.seg = (v.seg + 1) % v.path.length;
+        if (v.stops?.has(v.path[v.seg])) v.dwell = 1.2;
         v.t = 0;
         v.wait = 0;
         const tile = v.path[v.seg];
@@ -436,7 +486,7 @@ export class Traffic {
         }
         this.setupSegment(v);
       }
-      if (!alive || v.age > 240) {
+      if (!alive || (v.age > 240 && !v.loop)) {
         this.release(v);
         if (alive) this.tripsFailed++; else this.tripsCompleted++;
         continue;

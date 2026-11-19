@@ -41,6 +41,18 @@ function truckGeometry(): THREE.BufferGeometry {
   ])!;
 }
 
+function busGeometry(): THREE.BufferGeometry {
+  const B = THREE.BoxGeometry;
+  return mergeGeometries([
+    part(new B(0.13, 0.11, 0.36), '#ffffff', 0, 0.075, 0),
+    part(new B(0.132, 0.04, 0.34), '#1d2733', 0, 0.1, 0), // vitres
+    part(new B(0.12, 0.012, 0.3), '#f5f5f4', 0, 0.136, 0), // toit
+    part(new B(0.135, 0.026, 0.05), '#141414', 0, 0.02, 0.12),
+    part(new B(0.135, 0.026, 0.05), '#141414', 0, 0.02, -0.12),
+    part(new B(0.1, 0.02, 0.004), '#fde047', 0, 0.12, 0.181), // girouette
+  ])!;
+}
+
 /** Rendu instancié des véhicules, synchronisé à chaque image sur la simulation. */
 export class Vehicles {
   readonly group = new THREE.Group();
@@ -54,7 +66,7 @@ export class Vehicles {
 
   constructor(private world: World, private traffic: Traffic) {
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.25 });
-    this.meshes = [carGeometry(), truckGeometry()].map((g) => {
+    this.meshes = [carGeometry(), truckGeometry(), busGeometry()].map((g) => {
       const mesh = new THREE.InstancedMesh(g, mat, MAX);
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.castShadow = true;
@@ -68,10 +80,11 @@ export class Vehicles {
 
   update(): void {
     const w = this.world;
-    const counts = [0, 0];
+    const counts = [0, 0, 0];
     for (const v of this.traffic.vehicles) {
-      const mesh = this.meshes[v.kind === VehicleKind.Truck ? 1 : 0];
-      const id = counts[v.kind === VehicleKind.Truck ? 1 : 0]++;
+      const k = v.kind === VehicleKind.Bus ? 2 : v.kind === VehicleKind.Truck ? 1 : 0;
+      const mesh = this.meshes[k];
+      const id = counts[k]++;
       if (id >= MAX) continue;
       const y = w.heightAt(v.x, v.z) + 0.04;
       // Inclinaison selon la pente

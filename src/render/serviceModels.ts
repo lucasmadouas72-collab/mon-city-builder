@@ -131,6 +131,17 @@ function park(): THREE.BufferGeometry {
   return b.build();
 }
 
+function metroStation(): THREE.BufferGeometry {
+  const b = lot(new Builder(), '#c9c4b8');
+  b.box(0.7, 0.03, 0.5, 0, 0.03, 0.05, '#9ca3af'); // parvis
+  b.box(0.44, 0.2, 0.3, 0, 0.03, -0.12, '#e5e7eb');
+  b.add(new THREE.CylinderGeometry(0.26, 0.26, 0.46, 12, 1, false, 0, Math.PI).rotateZ(Math.PI / 2).rotateY(Math.PI / 2).scale(1, 0.45, 1), '#a5b4fc', 0, 0.23, -0.12); // verrière
+  b.box(0.2, 0.12, 0.02, 0, 0.03, 0.04, '#1f2937'); // bouche de métro
+  b.box(0.06, 0.32, 0.06, 0.3, 0.03, 0.28, '#4b5563');
+  b.box(0.14, 0.14, 0.03, 0.3, 0.35, 0.28, '#e879f9'); // totem M
+  return b.build();
+}
+
 export function createServiceModels(): Map<Service, THREE.BufferGeometry> {
   return new Map<Service, THREE.BufferGeometry>([
     [Service.PowerPlant, powerPlant()],
@@ -143,5 +154,6 @@ export function createServiceModels(): Map<Service, THREE.BufferGeometry> {
     [Service.Police, police()],
     [Service.FireStation, fireStation()],
     [Service.Park, park()],
+    [Service.MetroStation, metroStation()],
   ]);
 }

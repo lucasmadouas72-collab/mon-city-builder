@@ -25,6 +25,7 @@ Puis ouvrir l'adresse affichée (http://localhost:5173).
 | Zoner | cliquer-glisser une zone près d'une route |
 | Tracer une route | cliquer-glisser |
 | Vue trafic | T (autres vues : bouton « Vues ») |
+| Budget | B (ou clic sur le budget) |
 | Pause | Espace |
 | Annuler | Échap |
 
@@ -34,7 +35,7 @@ Puis ouvrir l'adresse affichée (http://localhost:5173).
 - [x] **Phase 2** : zonage (R, C, I, bureaux), demande, bâtiments procéduraux sur 3 niveaux, valeur foncière, impôts
 - [x] **Phase 3** : trajets domicile/travail, courses et livraisons, itinéraires A* évitant les bouchons, conduite à droite, files et priorités aux carrefours, vue trafic
 - [x] **Phase 4** : électricité, eau, égouts, déchets (distribués par le réseau routier), santé, école, police, pompiers, parcs, bonheur, incendies, vues de données
-- [ ] Phase 5 : économie complète, transports en commun, vues de données
+- [x] **Phase 5** : impôts par zone, budgets des services, emprunts, bilan mensuel, lignes de bus et de métro, paliers de population avec déblocages et subventions
 - [ ] Phase 6 : jour/nuit, effets, sauvegarde, optimisation
 
 ## Organisation du code

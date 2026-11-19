@@ -6,10 +6,11 @@ import { Overlay } from './Overlay';
 
 export type ViewMode =
   | 'none' | 'traffic' | 'power' | 'water' | 'sewage' | 'garbage'
-  | 'health' | 'education' | 'police' | 'fire' | 'park' | 'happiness' | 'land';
+  | 'health' | 'education' | 'police' | 'fire' | 'park' | 'happiness' | 'land' | 'transport';
 
 export const VIEW_LABELS: Array<[ViewMode, string]> = [
   ['traffic', 'Trafic'],
+  ['transport', 'Transports'],
   ['power', 'Électricité'],
   ['water', 'Eau'],
   ['sewage', 'Égouts'],
@@ -65,7 +66,30 @@ export class DataView {
     this.onChange?.(this.mode);
   }
 
+  private coverCache: Uint8Array | null = null;
+
+  private transitCover(idx: number): boolean {
+    return !!this.coverCache?.[idx];
+  }
+
+  private buildCover(): void {
+    const w = this.sim.world, n = w.size;
+    const cover = new Uint8Array(n * n);
+    for (const line of this.sim.transit.lines) {
+      if (line.broken) continue;
+      const r = line.kind === 'bus' ? 6 : 9;
+      for (const s of line.stops) {
+        const si = s % n, sj = (s - si) / n;
+        for (let b = Math.max(0, sj - r); b <= Math.min(n - 1, sj + r); b++)
+          for (let a = Math.max(0, si - r); a <= Math.min(n - 1, si + r); a++)
+            if (Math.abs(a - si) + Math.abs(b - sj) <= r) cover[b * n + a] = 1;
+      }
+    }
+    this.coverCache = cover;
+  }
+
   update(time: number): void {
+    if (this.mode === 'transport' && time - this.last >= 0.5) this.buildCover();
     if (this.mode === 'none' || time - this.last < 0.5) return;
     this.last = time;
     const w = this.sim.world, ut = this.sim.utilities;
@@ -92,6 +116,8 @@ export class DataView {
         else if (built) add('#7f1d1d', idx);
       } else if (m === 'happiness') {
         if (built) add(ramp(ut.happiness[idx]), idx);
+      } else if (m === 'transport') {
+        if (built && this.transitCover(idx)) add('#38bdf8', idx);
       } else if (m === 'land') {
         if (w.zones[idx]) add(ramp((this.sim.landValue(idx) - 0.2) / 0.7), idx);
       }

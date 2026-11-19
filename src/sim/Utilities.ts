@@ -1,7 +1,7 @@
 import type { World } from './World';
 import { BuildState, Zone } from './zones';
 import {
-  CONSUMPTION, Coverage, SERVICE_INFO, Service, UTILITIES, Utility,
+  CONSUMPTION, Coverage, SERVICE_INFO, Service, UTILITIES, Utility, type BudgetKey,
 } from './services';
 
 const hash01 = (idx: number, salt: number) => {
@@ -41,6 +41,10 @@ export class Utilities {
   /** Réseau routier connexe de chaque case de route (-1 sinon). */
   private component: Int32Array;
   private spare: Map<number, number[]> = new Map();
+  /** Facteur de budget par poste (0.5 à 1.5). */
+  budget: (key: BudgetKey) => number = () => 1;
+  /** Ajustement global du bonheur (impôts…). */
+  happinessOffset = 0;
   stats: UtilityStats = { supply: [0, 0, 0, 0], demand: [0, 0, 0, 0], served: [0, 0, 0, 0], happiness: 0, coverage: {}, burning: 0 };
 
   constructor(private world: World, private access: (idx: number) => number, private capacity: (idx: number) => number) {
@@ -122,11 +126,12 @@ export class Utilities {
       const i = idx % n, j = (idx - i) / n;
       if (info.utility !== undefined) {
         const net = this.networkOf(idx);
-        if (net >= 0) get(supply, net)[info.utility] += info.capacity!;
-        totalSupply[info.utility] += info.capacity!;
+        const cap = info.capacity! * this.budget(info.budget);
+        if (net >= 0) get(supply, net)[info.utility] += cap;
+        totalSupply[info.utility] += cap;
       }
       if (info.coverage && info.radius) {
-        const r = info.radius, r2 = r * r;
+        const r = Math.round(info.radius * (0.55 + 0.45 * this.budget(info.budget))), r2 = r * r;
         for (let b = Math.max(0, j - r); b <= Math.min(n - 1, j + r); b++) {
           for (let a = Math.max(0, i - r); a <= Math.min(n - 1, i + r); a++) {
             if ((a - i) ** 2 + (b - j) ** 2 <= r2) this.coverage[b * n + a] |= info.coverage;
@@ -197,6 +202,7 @@ export class Utilities {
       if (cov & Coverage.Fire) h += 0.04;
       if (cov & Coverage.Park) h += 0.07;
       h -= this.nuisance[idx];
+      h += this.happinessOffset;
       if (this.fire[idx]) h -= 0.3;
       h = Math.max(0, Math.min(1, h));
       this.happiness[idx] = h;
@@ -210,7 +216,7 @@ export class Utilities {
     let burning = 0;
     for (let k = 0; k < this.fire.length; k++) if (this.fire[k]) burning++;
     this.stats = {
-      supply: totalSupply,
+      supply: totalSupply.map(Math.round),
       demand: totalDemand.map(Math.round),
       served: servedCount.map((c) => (buildings ? c / buildings : 1)),
       happiness: happyWeight ? happySum / happyWeight : 0,

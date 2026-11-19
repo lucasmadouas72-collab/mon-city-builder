@@ -4,9 +4,10 @@ import { OverlayColor } from '../render/Overlay';
 import type { Simulation } from '../sim/Simulation';
 import type { CameraController } from './CameraController';
 import { Zone, ZONE_INFO, type ZoneType } from '../sim/zones';
-import { SERVICE_INFO, type Service } from '../sim/services';
+import { SERVICE_INFO, Service as Svc, type Service } from '../sim/services';
+import { BUS_STOP_COST } from '../sim/economy';
 
-export type ToolId = 'select' | 'road' | 'zoneR' | 'zoneC' | 'zoneI' | 'zoneO' | 'dezone' | 'bulldoze' | `svc${number}`;
+export type ToolId = 'select' | 'road' | 'zoneR' | 'zoneC' | 'zoneI' | 'zoneO' | 'dezone' | 'bulldoze' | 'busstop' | 'busline' | 'metroline' | `svc${number}`;
 
 /** Équipement placé par un outil `svcN`, ou null. */
 export const toolService = (t: ToolId): Service | null => (t.startsWith('svc') ? (Number(t.slice(3)) as Service) : null);
@@ -46,6 +47,9 @@ export class ToolManager {
   onToolChange?: (tool: ToolId) => void;
   onHover?: (info: HoverInfo | null) => void;
   onTooltip?: (tip: Tooltip | null) => void;
+  /** Aperçu de la ligne de transport en cours de tracé. */
+  onDraft?: (kind: 'bus' | 'metro' | null, tiles: number[]) => void;
+  private draft: number[] = [];
 
   private raycaster = new THREE.Raycaster();
   private ndc = new THREE.Vector2();
@@ -67,16 +71,46 @@ export class ToolManager {
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Escape') {
         if (this.dragStart) this.cancelDrag();
+        else if (this.draft.length) { this.draft = []; this.refresh(); }
         else this.setTool('select');
       }
+      if (e.code === 'Enter' && this.draft.length >= 2) this.finishLine();
     });
     sim.events.on('roadsChanged', () => this.refresh());
     sim.events.on('moneyChanged', () => this.refresh());
     sim.events.on('zonesChanged', () => this.refresh());
     sim.events.on('servicesChanged', () => this.refresh());
+    sim.events.on('transitChanged', () => this.refresh());
+  }
+
+  private get lineKind(): 'bus' | 'metro' | null {
+    return this.tool === 'busline' ? 'bus' : this.tool === 'metroline' ? 'metro' : null;
+  }
+
+  private isStop(idx: number): boolean {
+    const w = this.sim.world;
+    return this.lineKind === 'bus' ? w.busStop[idx] === 1 : w.service[idx] === Svc.MetroStation;
+  }
+
+  private finishLine(): void {
+    const kind = this.lineKind;
+    if (kind && this.draft.length >= 2) this.sim.createLine(kind, this.draft);
+    this.draft = [];
+    this.refresh();
+  }
+
+  private lineClick(idx: number): void {
+    if (!this.isStop(idx)) {
+      this.sim.events.emit('notify', { text: this.lineKind === 'bus' ? 'Cliquez sur un arrêt de bus' : 'Cliquez sur une station de métro', kind: 'warn' });
+      return;
+    }
+    if (this.draft.length >= 2 && idx === this.draft[0]) { this.finishLine(); return; }
+    if (this.draft[this.draft.length - 1] !== idx) this.draft.push(idx);
+    this.refresh();
   }
 
   setTool(tool: ToolId): void {
+    this.draft = [];
     this.tool = tool;
     this.cancelDrag();
     this.cam.setLeftPan(tool === 'select');
@@ -129,7 +163,11 @@ export class ToolManager {
     if (e.button !== 0 || !this.dragStart) return;
     const tiles = this.currentSelection();
     this.dragStart = null;
-    if (tiles) {
+    if (tiles && this.lineKind) {
+      this.lineClick(tiles[0]);
+    } else if (tiles && this.tool === 'busstop') {
+      this.sim.placeBusStop(tiles[0]);
+    } else if (tiles) {
       const zone = TOOL_ZONE[this.tool];
       if (this.tool === 'road') this.sim.buildRoads(tiles);
       else if (this.tool === 'bulldoze') this.sim.bulldoze(tiles);
@@ -176,6 +214,7 @@ export class ToolManager {
     const ov = this.view.overlay;
     const tiles = this.currentSelection();
     this.tip = null;
+    if (!this.lineKind) this.onDraft?.(null, []);
     if (!tiles) {
       ov.clear();
     } else if (this.tool === 'road') {
@@ -195,6 +234,30 @@ export class ToolManager {
         const net = est.refund - est.cost;
         this.tip = { text: net >= 0 ? `Démolir · +${fmt(net)}` : `Défricher · ${fmt(-net)}`, kind: 'info' };
       }
+    } else if (this.tool === 'busstop') {
+      const w = this.sim.world;
+      const idx = tiles[0];
+      const ok = this.sim.busUnlocked && w.tiles[idx] === 1 && !w.busStop[idx];
+      ov.set([[[idx], ok ? OverlayColor.valid : OverlayColor.invalid]]);
+      this.tip = !this.sim.busUnlocked ? { text: 'Bus débloqués à 1 200 habitants', kind: 'bad' }
+        : w.busStop[idx] ? { text: 'Arrêt déjà présent', kind: 'bad' }
+        : ok ? { text: `Arrêt de bus · ${fmt(BUS_STOP_COST)}`, kind: 'ok' } : { text: 'Un arrêt se place sur une route', kind: 'bad' };
+    } else if (this.lineKind) {
+      const kind = this.lineKind;
+      const idx = tiles[0];
+      const hoverStop = this.isStop(idx);
+      const seq = hoverStop && this.draft[this.draft.length - 1] !== idx ? [...this.draft, idx] : [...this.draft];
+      let preview: number[] = seq;
+      if (kind === 'bus' && seq.length >= 2) preview = this.sim.transit.routeFor(seq, false) ?? [];
+      this.onDraft?.(kind, preview);
+      ov.set([[this.draft, OverlayColor.valid], [[idx], hoverStop ? OverlayColor.hover : OverlayColor.invalid]]);
+      const unlocked = kind === 'bus' ? this.sim.busUnlocked : this.sim.isServiceUnlocked(Svc.MetroStation);
+      const what = kind === 'bus' ? 'arrêt' : 'station';
+      this.tip = !unlocked ? { text: kind === 'bus' ? 'Bus débloqués à 1 200 habitants' : 'Métro débloqué à 3 000 habitants', kind: 'bad' }
+        : kind === 'bus' && seq.length >= 2 && !preview.length ? { text: 'Arrêts non reliés par la route', kind: 'bad' }
+        : this.draft.length === 0 ? { text: `Cliquez sur le premier ${what}`, kind: 'info' }
+        : this.draft.length >= 2 && idx === this.draft[0] ? { text: 'Cliquez pour fermer la ligne', kind: 'ok' }
+        : { text: `${this.draft.length} ${what}(s) · Entrée pour terminer, Échap pour annuler`, kind: 'info' };
     } else if (toolService(this.tool)) {
       const type = toolService(this.tool)!;
       const info = SERVICE_INFO[type as Exclude<Service, 0>];
