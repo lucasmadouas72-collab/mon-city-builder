@@ -209,6 +209,43 @@ export function diagnose(sim: Simulation): Issue[] {
     });
   }
 
+  // ----- Logement et entreprises -----
+  const soc = sim.society, bs = soc.stats, cz = soc.citizens;
+  if (st.population > 100 && soc.vacancy < 0.02 && st.demand[Zone.Residential] > 0.2) {
+    out.push({
+      id: 'housing-shortage', severity: 'warning', title: `Pénurie de logements (${pct(soc.vacancy)} de logements libres)`,
+      causes: ['Des ménages veulent s’installer mais il n’y a plus de place.', 'Les loyers augmentent quand les logements manquent.'],
+      actions: ['Zoner du résidentiel supplémentaire.', 'Favoriser les immeubles : services et valeur foncière permettent aux maisons de grandir.'], view: 'occupancy',
+    });
+  }
+  if (st.population > 100 && cz.summaryBurden > 0.42) {
+    out.push({
+      id: 'rent-burden', severity: cz.summaryBurden > 0.55 ? 'serious' : 'warning', title: `Loyers trop chers (${pct(cz.summaryBurden)} des revenus)`,
+      causes: ['Les loyers dépassent ce que les ménages peuvent payer : certains déménagent ou quittent la ville.', soc.vacancy < 0.03 ? 'Le manque de logements fait monter les prix.' : 'Les salaires sont bas : peu d’emplois qualifiés.'],
+      actions: ['Construire plus de logements.', 'Attirer des emplois qualifiés (bureaux, éducation).'], view: 'rent',
+    });
+  }
+  const ue = sim.lastSociety?.unemployedByEdu ?? [0, 0, 0, 0];
+  if (ue[3] + ue[2] > 20 && bs.openJobs[1] + bs.openJobs[2] < (ue[3] + ue[2]) * 0.3) {
+    out.push({
+      id: 'skills-mismatch', severity: 'warning', title: 'Diplômés sans emploi adapté',
+      causes: [`${n(ue[2] + ue[3])} diplômé(s) au chômage pour seulement ${n(bs.openJobs[1] + bs.openJobs[2])} poste(s) qualifié(s) libres.`, `${n(cz.underemployedCount)} actif(s) occupent un poste en dessous de leur niveau.`],
+      actions: [sim.isUnlocked(Zone.Office) ? 'Zoner des bureaux, qui recrutent des diplômés.' : 'Les bureaux se débloquent à 600 habitants.', 'Baisser l’impôt des bureaux.'],
+    });
+  }
+  if (bs.businesses > 5 && bs.struggling > bs.businesses * 0.2) {
+    const worst = built.find((k) => soc.badMonths[k] >= 2);
+    out.push({
+      id: 'business', severity: bs.struggling > bs.businesses * 0.4 ? 'serious' : 'warning', title: `${n(bs.struggling)} entreprise(s) en difficulté`,
+      causes: [bs.spending < st.jobs[Zone.Commercial] * 2000 ? 'Trop de commerces pour le pouvoir d’achat des habitants.' : '',
+        bs.imports > bs.goodsDemand * 0.5 ? 'Les commerces paient cher des marchandises importées : pas assez d’industrie.' : '',
+        bs.exports > bs.goodsProduced * 0.5 ? 'L’industrie produit plus que la ville ne consomme et exporte à perte.' : '',
+        'Des postes restent vides faute de travailleurs qualifiés.'].filter(Boolean),
+      actions: ['Équilibrer les zones : plus d’habitants pour les commerces, plus d’industrie si les importations sont fortes.', 'Baisser temporairement les impôts des entreprises.'],
+      tile: worst,
+    });
+  }
+
   // ----- Catastrophes, risques et pollutions -----
   for (const d of sim.disasters.active) {
     out.push({

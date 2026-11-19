@@ -222,14 +222,15 @@ export class Disasters {
     const sim = this.sim, w = sim.world;
     if (amount <= 0 || w.bState[k] !== BuildState.Built) return;
     const before = w.bDamage[k];
-    const people = sim.capacity(k);
+    const people = sim.occupants(k);
+    const isHome = w.zones[k] === Zone.Residential;
+    let victims = 0;
+    if (!d.evacuated && isHome) victims = Math.round(people * (Math.min(100, w.bDamage[k] + amount) >= 100 ? 0.05 : amount / 100 * 0.03) * (d.warned ? 0.4 : 1));
+    if (victims) d.casualties += sim.society.citizens.casualties(k, victims);
     const destroyed = sim.damageBuilding(k, Math.round(amount));
     d.damaged++;
     d.cost += Math.round((Math.min(100, before + amount) - before) * 6 * Math.max(1, w.bLevel[k]));
     if (destroyed) d.destroyed++;
-    if (!d.evacuated && w.zones[k] === Zone.Residential) {
-      d.casualties += Math.round(people * (destroyed ? 0.05 : amount / 100 * 0.03) * (d.warned ? 0.4 : 1));
-    }
   }
 
   /** Avancement quotidien. */

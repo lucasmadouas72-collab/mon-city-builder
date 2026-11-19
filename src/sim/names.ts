@@ -45,3 +45,8 @@ export function companyName(idx: number, zone: number): string {
   if (zone === 3) return `${pick(r, FACTORIES)} ${owner}`;
   return `${owner} ${pick(r, OFFICES)}`;
 }
+
+/** Nom d'un citoyen : nom de famille tiré du foyer, prénom tiré du citoyen. */
+export function citizenName(householdSeed: number, seed: number): string {
+  return `${FIRST[seed % FIRST.length]} ${LAST[householdSeed % LAST.length]}`;
+}

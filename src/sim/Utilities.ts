@@ -64,8 +64,8 @@ export class Utilities {
   /** Production des éoliennes selon le vent. */
   windFactor = 1;
   /** Part d'élèves et de malades dans la population (fournie par la démographie). */
-  studentShare = 0.25;
-  sickShare = 0.025;
+  studentsOf: (idx: number) => number = () => 0;
+  sickOf: (idx: number) => number = () => 0;
   /** Occupation de chaque école ou clinique, et bilan global. */
   loads = new Map<number, FacilityLoad>();
   reach: ReachStats = { students: 0, seats: 0, unschooled: 0, patients: 0, beds: 0, untreated: 0 };
@@ -269,7 +269,7 @@ export class Utilities {
 
     // Santé, éducation, police, pompiers : portée par la route et capacités réelles
     const reach = computeReach(w, this.access, this.capacity, (svc) => this.budget(SERVICE_INFO[svc as Exclude<Service, 0>].budget),
-      this.trafficDensity, this.studentShare, this.sickShare, this.coverage);
+      this.trafficDensity, this.studentsOf, this.sickOf, this.coverage);
     this.loads = reach.loads;
     this.reach = reach.stats;
 

@@ -174,7 +174,7 @@ function startGame(config: GameConfig, file?: SaveFile): void {
   if (!file) sim.events.emit('notify', { text: `Bienvenue à ${config.cityName} ! Commencez par tracer une route.`, kind: 'info' });
 
   // Accès console pour le débogage
-  Object.assign(window, { game: { world, sim, view, cam, tools, trafficView, dataView, services, transitView, atmosphere, undo }, __geo: roadGeometry, __reach: computeReach });
+  Object.assign(window, { game: { world, sim, view, cam, tools, trafficView, dataView, services, transitView, atmosphere, undo }, __geo: roadGeometry, __reach: computeReach, __save: () => serialize(sim, config, cameraState()), __load: (d: string) => { const f = parseSave(d); return f; } });
 }
 
 async function loadAndStart(data: string | null): Promise<boolean> {

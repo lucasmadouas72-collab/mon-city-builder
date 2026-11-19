@@ -5,7 +5,8 @@ import { StatsPanel } from './StatsPanel';
 import { AdvisorPanel } from './AdvisorPanel';
 import { SEVERITY_NAMES } from '../sim/Advisor';
 import { FACILITY_VEHICLES } from '../sim/ServiceReach';
-import { companyName, residentsOf } from '../sim/names';
+import { citizenName, companyName } from '../sim/names';
+import { EDU_NAMES, SALARY, STATUS_NAMES, Status as CStatus } from '../sim/Citizens';
 import { BUS_STOP_COST, BUS_UNLOCK, MILESTONES } from '../sim/economy';
 import { SEASON_NAMES, WEATHER_NAMES } from '../sim/Environment';
 import { fmt, ROAD_MODE_NAMES, type HoverInfo, type RoadMode, type ToolId, type ToolManager, type Tooltip } from '../input/ToolManager';
@@ -466,12 +467,37 @@ export class Hud {
         const cap = this.sim.capacity(idx);
         const okU = (u: Utility) => ut.hasUtility(idx, u);
         const icons = UTILITIES.map((u) => `<span class="u ${okU(u) ? 'ok' : 'ko'}" title="${UTILITY_NAMES[u]}" style="--c:${UTILITY_COLORS[u]}">${UTILITY_SHORT[u]}</span>`).join('');
-        const people = zone === Zone.Residential
-          ? `<dt class="wide">Quelques habitants</dt>${residentsOf(idx, Math.min(3, cap), this.sim.demo.education).map((p) => `<dd class="wide person">${p.name}, ${p.age} ans · ${p.occupation}</dd>`).join('')}`
-          : `<dt>Entreprise</dt><dd>${companyName(idx, zone)}</dd>`;
+        const soc = this.sim.society, cz = soc.citizens;
+        let people: string;
+        if (zone === Zone.Residential) {
+          // Habitants réels du bâtiment
+          const hs = cz.householdsAt.get(idx) ?? [];
+          const list: string[] = [];
+          for (const h of hs) for (const c of cz.members[h]) {
+            if (list.length >= 4) break;
+            const st = cz.status[c];
+            const job = st === CStatus.Worker && cz.job[c] >= 0 ? ` chez ${companyName(cz.job[c], w.zones[cz.job[c]])}` : '';
+            list.push(`${citizenName(cz.hSeed[h], cz.seed[c])}, ${Math.floor(cz.age[c])} ans · ${STATUS_NAMES[st]}${job} · ${EDU_NAMES[cz.edu[c]]}${cz.sick[c] ? ' · malade' : ''}`);
+          }
+          const income = hs.reduce((a, h) => a + cz.hIncome[h], 0) / Math.max(1, hs.length);
+          people = `<dt>Logements</dt><dd>${cz.homesTaken[idx]} / ${soc.homesOf(idx)} occupés</dd>
+            <dt>Loyer</dt><dd>${fmt(soc.rent(idx))} / mois</dd>
+            ${hs.length ? `<dt>Revenu moyen</dt><dd>${fmt(income)} / foyer</dd>` : ''}
+            ${list.length ? `<dt class="wide">Habitants</dt>${list.map((l) => `<dd class="wide person">${l}</dd>`).join('')}${cz.residents[idx] > list.length ? `<dd class="wide person">… et ${cz.residents[idx] - list.length} autre(s)</dd>` : ''}` : ''}`;
+        } else {
+          const by = [0, 1, 2].map((l) => `${cz.employeesBy[l][idx]}/${soc.slotsOf(idx, l)}`).join(' · ');
+          const status = soc.badMonths[idx] >= 3 ? '<span class="bad">en difficulté, licenciements</span>' : soc.badMonths[idx] ? 'fragile' : soc.goodMonths[idx] > 2 ? 'prospère' : 'stable';
+          people = `<dt>Entreprise</dt><dd>${companyName(idx, zone)}</dd>
+            <dt>Employés</dt><dd title="Peu qualifiés · qualifiés · très qualifiés">${by}</dd>
+            <dt>Recettes</dt><dd>${fmt(soc.revenue[idx])} / mois</dd>
+            <dt>Coûts</dt><dd>${fmt(soc.costs[idx])} / mois</dd>
+            <dt>Bénéfice</dt><dd class="${soc.profit[idx] < 0 ? 'bad' : ''}">${fmt(soc.profit[idx])}</dd>
+            <dt>Situation</dt><dd>${status}</dd>`;
+          void SALARY;
+        }
         extra = `${people}<dt>Bâtiment</dt><dd>${LEVEL_NAMES[w.bLevel[idx]]}</dd>
           <dt>Pollution</dt><dd>air ${Math.round(ut.air[idx] * 100)} % · bruit ${Math.round(ut.noise[idx] * 100)} %</dd>
-          <dt>${zone === Zone.Residential ? 'Habitants' : 'Emplois'}</dt><dd>${cap}</dd>
+          <dt>${zone === Zone.Residential ? 'Habitants' : 'Postes'}</dt><dd>${zone === Zone.Residential ? this.sim.society.citizens.residents[idx] : this.sim.society.citizens.employees[idx]} / ${cap}</dd>
           <dt>Réseaux</dt><dd>${icons}</dd>
           <dt>Bonheur</dt><dd>${Math.round(ut.happiness[idx] * 100)} %</dd>
           ${ut.fire[idx] ? '<dt>État</dt><dd class="bad">En feu !</dd>' : ''}

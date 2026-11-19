@@ -45,6 +45,12 @@ export class StatsPanel {
           <section><h3>Pyramide des âges</h3><div id="cohorts"></div></section>
           <section><h3>Services et société</h3><div id="society"></div></section>
         </div>
+        <div class="stats-grid">
+          <section><h3>Logement et revenus</h3><div id="housing"></div></section>
+          <section><h3>Emploi et entreprises</h3><div id="economy"></div></section>
+        </div>
+        <h3>Besoins des habitants</h3>
+        <div class="needs" id="needs"></div>
         <h3>Catastrophes</h3>
         <div id="disasters"></div>
         <h3>Évolution mensuelle</h3>
@@ -104,6 +110,32 @@ export class StatsPanel {
         <dt>Intervention police</dt><dd>${es.response.crime ? `${es.response.crime} min` : '–'} · ${es.resolved.crime} / ${es.failed.crime}</dd>
       </dl>`;
 
+    const soc = s.society, ss = s.lastSociety, b = soc.stats, cz = soc.citizens;
+    const eur = (v: number) => `${Math.round(v).toLocaleString('fr-FR')} €`;
+    this.q('#housing').innerHTML = `<dl class="facts">
+      <dt>Foyers</dt><dd>${num(ss?.households ?? 0)}</dd>
+      <dt>Logements occupés / total</dt><dd>${num(soc.homesTotal - soc.homesFree)} / ${num(soc.homesTotal)}</dd>
+      <dt>Logements vacants</dt><dd>${pct(soc.vacancy)}</dd>
+      <dt>Revenu moyen par foyer</dt><dd>${eur(ss?.avgIncome ?? 0)} / mois</dd>
+      <dt>Loyer moyen</dt><dd>${eur(ss?.avgRent ?? 0)} / mois</dd>
+      <dt>Part du loyer dans le revenu</dt><dd>${pct(cz.summaryBurden)}</dd>
+      <dt>Coût de la vie</dt><dd>${Math.round(soc.costOfLiving * 100)} (base 100)</dd>
+      <dt>Arrivées / départs (mois)</dt><dd>+${num(cz.report.immigrants)} / −${num(cz.report.emigrants)}</dd>
+      <dt>Déménagements (mois)</dt><dd>${num(cz.report.moves)}</dd></dl>`;
+    const ue = ss?.unemployedByEdu ?? [0, 0, 0, 0];
+    this.q('#economy').innerHTML = `<dl class="facts">
+      <dt>Actifs occupés</dt><dd>${num(ss?.workers ?? 0)}</dd>
+      <dt>Chômeurs (sans dipl. · prim. · second. · sup.)</dt><dd>${ue.map(num).join(' · ')}</dd>
+      <dt>Postes vacants (peu qualif. · qualif. · très qualif.)</dt><dd>${b.openJobs.map(num).join(' · ')}</dd>
+      <dt>Actifs sous-employés</dt><dd>${num(cz.underemployedCount)}</dd>
+      <dt>Entreprises / en difficulté</dt><dd>${num(b.businesses)} / ${num(b.struggling)}</dd>
+      <dt>Faillites (mois / total)</dt><dd>${num(b.closedThisMonth)} / ${num(b.closedTotal)}</dd>
+      <dt>Locaux sous-utilisés</dt><dd>${num(b.underused)}</dd>
+      <dt>Dépenses des ménages</dt><dd>${eur(b.spending)} / mois</dd>
+      <dt>Marchandises : besoin / production</dt><dd>${eur(b.goodsDemand)} / ${eur(b.goodsProduced)}</dd>
+      <dt>Importations / exportations</dt><dd>${eur(b.imports)} / ${eur(b.exports)}</dd></dl>`;
+    this.q('#needs').innerHTML = soc.needs().map(([name, v, detail]) => `
+      <div class="need"><span>${name}</span><div class="cbar"><i style="width:${Math.round(v * 100)}%;background:${v < 0.4 ? '#ef4444' : v < 0.65 ? '#facc15' : 'var(--accent)'}"></i></div><b>${Math.round(v * 100)} %</b><small>${detail}</small></div>`).join('');
     const dl = s.disasters.list.filter((d) => d.status === 'over').slice(-8).reverse();
     this.q('#disasters').innerHTML = dl.length ? `<table class="ledger">${dl.map((d) => `<tr><td>${DISASTER_NAMES[d.type]} · ${this.dateLabel(Math.floor(d.day / 30))}</td>
       <td>${d.destroyed} détruit(s) · ${d.casualties} victime(s) · ${Math.round(d.cost).toLocaleString('fr-FR')} €</td></tr>`).join('')}</table>` : '<p class="hint">Aucune catastrophe pour le moment.</p>';

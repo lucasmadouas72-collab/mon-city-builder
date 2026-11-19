@@ -390,3 +390,9 @@ button.ghost.small { padding: 4px 8px; font-size: 11.5px; }
 label.inline { display: flex; align-items: center; gap: 10px; font-size: 13px; width: 100%; justify-content: space-between; }
 label.inline select { font: inherit; color: var(--text); background: rgba(255,255,255,0.06); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
 label.inline select option { background: var(--bg-solid); }
+
+/* ---- Étape 10 : besoins ---- */
+.needs { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 6px 24px; }
+.need { display: grid; grid-template-columns: 110px 1fr 46px; gap: 4px 10px; align-items: center; font-size: 13px; }
+.need b { text-align: right; font-variant-numeric: tabular-nums; }
+.need small { grid-column: 1 / -1; color: var(--muted); font-size: 11.5px; margin-top: -2px; }

@@ -6,7 +6,7 @@ import { Overlay } from './Overlay';
 
 export type ViewMode =
   | 'none' | 'traffic' | 'power' | 'water' | 'sewage' | 'garbage'
-  | 'health' | 'education' | 'police' | 'fire' | 'park' | 'happiness' | 'land' | 'transport' | 'air' | 'noise' | 'crime' | 'waterPol' | 'soil' | 'light' | 'damage' | 'risk';
+  | 'health' | 'education' | 'police' | 'fire' | 'park' | 'happiness' | 'land' | 'transport' | 'air' | 'noise' | 'crime' | 'waterPol' | 'soil' | 'light' | 'damage' | 'risk' | 'rent' | 'occupancy';
 
 export const VIEW_LABELS: Array<[ViewMode, string]> = [
   ['traffic', 'Trafic'],
@@ -30,6 +30,8 @@ export const VIEW_LABELS: Array<[ViewMode, string]> = [
   ['risk', 'Risques naturels'],
   ['happiness', 'Bonheur'],
   ['land', 'Valeur foncière'],
+  ['rent', 'Loyers'],
+  ['occupancy', 'Occupation des bâtiments'],
 ];
 
 const UTIL: Partial<Record<ViewMode, [Utility, Service[]]>> = {
@@ -83,6 +85,8 @@ const LEGENDS: Record<Exclude<ViewMode, 'none'>, Legend> = {
   light: { title: 'Pollution lumineuse', unit: 'indice 0 à 100 % (la nuit)', items: [['#fef9c3', 'Faible'], ['#facc15', 'Modérée'], ['#f59e0b', 'Forte']], explanation: 'Éclairage des commerces, bureaux et grands axes. Elle gêne le sommeil des habitants voisins.' },
   damage: { title: 'Dégâts', unit: '0 à 100 %', items: [['#facc15', 'Bâtiment légèrement endommagé'], ['#f97316', 'Gravement endommagé'], ['#57534e', 'Gravats (déblaiement en cours)'], ['#fb923c', 'Route abîmée (ralentie)'], ['#3b82c4', 'Inondé']], explanation: 'Les réparations sont automatiques et facturées chaque mois (poste « Réparations et reconstruction »). Le budget Pompiers accélère les réparations.' },
   risk: { title: 'Risques naturels', unit: 'zones exposées', items: [['#3b82c4', 'Zone inondable non protégée'], ['#14b8a6', 'Zone inondable protégée par une digue'], ['#d97706', 'Forêt dense (risque de feu)']], explanation: 'Les cases basses proches de l’eau peuvent être inondées lors des fortes pluies. Une digue protège 6 cases autour d’elle. Les forêts denses brûlent lors des canicules.' },
+  rent: { title: 'Loyers', unit: '€ par foyer et par mois', items: [['#22c55e', '< 450 €'], ['#a3e635', '450 à 600 €'], ['#facc15', '600 à 750 €'], ['#f97316', '750 à 900 €'], ['#ef4444', '> 900 €']], explanation: 'Le loyer dépend du niveau du bâtiment, de la valeur foncière et du manque de logements.' },
+  occupancy: { title: 'Occupation', unit: 'part des logements ou des postes occupés', items: [['#ef4444', 'Presque vide'], ['#f97316', 'Peu occupé'], ['#facc15', 'À moitié'], ['#a3e635', 'Bien occupé'], ['#22c55e', 'Plein']], explanation: 'Logements habités (résidentiel) ou postes pourvus (entreprises). Un bâtiment vide ne rapporte rien.' },
   happiness: { title: 'Bonheur', unit: '0 à 100 %', items: [['#ef4444', 'Très mécontent'], ['#f97316', 'Mécontent'], ['#facc15', 'Neutre'], ['#a3e635', 'Satisfait'], ['#22c55e', 'Très satisfait']], explanation: 'Combine réseaux, services, pollution, délinquance, espaces verts, impôts et météo.' },
   land: { title: 'Valeur foncière', unit: 'indice relatif', items: [['#ef4444', 'Très basse'], ['#f97316', 'Basse'], ['#facc15', 'Moyenne'], ['#a3e635', 'Élevée'], ['#22c55e', 'Très élevée']], explanation: 'Augmente avec l’eau, la verdure, les services et les voies piétonnes ; baisse près de l’industrie, des autoroutes et de la pollution.' },
 };
@@ -190,6 +194,15 @@ export class DataView {
         else if (built || w.zones[idx] || w.tiles[idx]) {
           const r = this.sim.disasters.floodRisk(idx, levees);
           if (r) add(r === 2 ? '#14b8a6' : '#3b82c4', idx);
+        }
+      } else if (m === 'rent') {
+        if (built && w.zones[idx] === 1) { const r = this.sim.society.rent(idx); add(r < 450 ? '#22c55e' : r < 600 ? '#a3e635' : r < 750 ? '#facc15' : r < 900 ? '#f97316' : '#ef4444', idx); }
+      } else if (m === 'occupancy') {
+        if (built) {
+          const soc = this.sim.society, cz = soc.citizens;
+          const cap = w.zones[idx] === 1 ? soc.homesOf(idx) : soc.slotsOf(idx, 0) + soc.slotsOf(idx, 1) + soc.slotsOf(idx, 2);
+          const used = w.zones[idx] === 1 ? cz.homesTaken[idx] : cz.employees[idx];
+          add(ramp(cap ? used / cap : 0), idx);
         }
       } else if (m === 'crime') {
         if (built) add(RAMP[4 - Math.max(0, Math.min(4, Math.floor(ut.crime[idx] * 5)))], idx);

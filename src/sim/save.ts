@@ -54,6 +54,7 @@ export function serialize(sim: Simulation, config: GameConfig, camera?: CameraSt
       env: { hour: sim.env.hour, weather: sim.env.weather },
       demo: { shares: sim.demo.shares, education: sim.demo.education },
       lines: sim.transit.lines.map((l) => ({ kind: l.kind, stops: l.stops, color: l.color, name: l.name })),
+      citizens: sim.society.citizens.serialize(),
     },
     camera,
   };
@@ -89,6 +90,12 @@ export function applySave(sim: Simulation, file: SaveFile): void {
   if (s.demo) { sim.demo.shares = s.demo.shares; sim.demo.education = s.demo.education; }
   sim.transit.budget = (sim.budgets.transport ?? 100) / 100;
   sim.afterLoad();
+  // Habitants : restaurés, ou créés pour remplir les logements des anciennes sauvegardes
+  const w = sim.world;
+  const isJob = (t: number) => w.bState[t] === 2 && w.zones[t] >= 2;
+  if (s.citizens?.c) sim.society.citizens.restore(s.citizens, isJob);
+  else sim.society.bootstrap();
+  sim.society.refreshMarkets();
   for (const l of s.lines ?? []) {
     const line = sim.transit.addLine(l.kind, l.stops);
     if (line) { line.color = l.color; line.name = l.name; sim.transit.refreshLine(line); }

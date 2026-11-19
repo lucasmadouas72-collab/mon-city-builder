@@ -9,6 +9,8 @@ import { Utilities } from './Utilities';
 import { Environment } from './Environment';
 import { Emergency } from './Emergency';
 import { Disasters } from './Disasters';
+import { Society } from './Society';
+import { Status } from './Citizens';
 import { Demographics } from './Population';
 import { DIFFICULTY, defaultConfig, type GameConfig } from '../game/config';
 import { Transit, type TransitKind } from './Transit';
@@ -101,6 +103,7 @@ export class Simulation {
   readonly env = new Environment();
   readonly emergency: Emergency;
   readonly disasters: Disasters;
+  readonly society: Society;
   /** Coût des réparations du mois en cours (facturé en fin de mois). */
   private repairAccum = 0;
   /** Coût des réparations du mois précédent. */
@@ -114,13 +117,16 @@ export class Simulation {
   private incomeMul = 1;
   /** Historique mensuel pour les statistiques. */
   history: HistoryPoint[] = [];
-  private popAtMonthStart = 0;
+  popAtMonthStart = 0;
   private lastUtilityHint = -999;
 
   constructor(world: World) {
     this.world = world;
     this.traffic = new Traffic(world);
-    this.utilities = new Utilities(world, (idx) => this.traffic.roadAccess(idx), (idx) => this.capacity(idx));
+    this.society = new Society(this);
+    this.utilities = new Utilities(world, (idx) => this.traffic.roadAccess(idx), (idx) => this.occupants(idx));
+    this.utilities.studentsOf = (idx) => this.society.citizens.students[idx];
+    this.utilities.sickOf = (idx) => this.society.citizens.sickBy[idx];
     this.utilities.budget = (k) => this.budgets[k] / 100;
     this.utilities.trafficDensity = this.traffic.density;
     this.transit = new Transit(world, this.traffic);
@@ -290,6 +296,8 @@ export class Simulation {
     this.disasters.daily();
     this.repairDaily();
     this.generateIncidents();
+    this.society.daily();
+    this.society.citizens.tally();
     if (this.dayCount % 10 === 0) this.computeCrime();
 
     // Avancement des chantiers
@@ -360,7 +368,8 @@ export class Simulation {
             // Plus d'accès routier : le bâtiment est abandonné puis rasé
             this.clearBuilding(idx);
             changed.push(idx);
-          } else if (demand < -0.55 && this.rand() < 0.04) {
+          } else if (demand < -0.55 && this.rand() < 0.04 && this.occupants(idx) === 0) {
+            // Bâtiment vide sans demande : abandonné
             this.clearBuilding(idx);
             changed.push(idx);
           } else if (w.bLevel[idx] < 3 && w.bTimer[idx] > 40 && demand > 0.15 && this.canUpgrade(idx) && this.rand() < 0.12) {
@@ -410,6 +419,23 @@ export class Simulation {
     this.emergency.report('fire', k, this.dayCount);
     this.events.emit('firesChanged', undefined);
   }
+
+  /** Démographie (pyramide, naissances, éducation…) calculée à partir des habitants réels. */
+  private syncDemographics(): void {
+    const c = this.society.citizens;
+    const s = c.summary();
+    const total = s.ages.reduce((a, b) => a + b, 0) || 1;
+    this.demo.shares = s.ages.map((a) => a / total);
+    const adults = s.edu.reduce((a, b) => a + b, 0) || 1;
+    this.demo.education = (s.edu[2] + s.edu[3]) / adults;
+    this.demo.sick = this.stats.population ? s.sick / this.stats.population : 0;
+    const r = c.report;
+    this.demo.last = { births: r.births, deaths: r.deaths, migration: r.immigrants - r.emigrants };
+    this.lastSociety = s;
+  }
+
+  /** Dernier bilan détaillé de la population (mis à jour chaque mois). */
+  lastSociety: import('./Citizens').SocietySummary | null = null;
 
   /** Pollution des sols : s'accumule autour de l'industrie et des centres de tri, se résorbe lentement. */
   private accumulateSoil(): void {
@@ -514,6 +540,11 @@ export class Simulation {
 
   private clearBuilding(idx: number): void {
     const w = this.world;
+    // Les occupants partent : les foyers cherchent un autre logement, les employés perdent leur emploi
+    if (this.society) {
+      if (w.zones[idx] === Zone.Residential) this.society.citizens.evict(idx, (h) => this.society.findHome(this.society.citizens.hIncome[h], idx));
+      else this.society.citizens.fireAll(idx);
+    }
     this.utilities.fire[idx] = 0;
     this.utilities.problemDays[idx] = 0;
     w.bState[idx] = BuildState.Empty;
@@ -565,11 +596,28 @@ export class Simulation {
     const pop = this.stats.population;
     const ut = this.utilities;
     if (!ut.hasUtility(idx, Utility.Power) || !ut.hasUtility(idx, Utility.Water)) return false;
+    // Un bâtiment ne s'agrandit que s'il est bien occupé (logements) ou rentable (entreprises)
+    if (zone === Zone.Residential && this.society.citizens.homesTaken[idx] < this.society.homesOf(idx) * 0.8) return false;
+    if (zone !== Zone.Residential && this.society.goodMonths[idx] < 2) return false;
     if (level === 2 && !ut.hasUtility(idx, Utility.Sewage)) return false;
     if (zone === Zone.Industrial) return pop > (level === 1 ? 250 : 1500);
     if (level === 2 && zone === Zone.Residential && !(ut.coverage[idx] & Coverage.Education)) return false;
     const lv = this.landValue(idx);
     return level === 1 ? pop > 200 && lv > 0.4 : pop > 1500 && lv > 0.55;
+  }
+
+  /** Habitants (logements) ou employés (entreprises) réellement présents. */
+  occupants(idx: number): number {
+    const c = this.society.citizens;
+    return this.world.zones[idx] === Zone.Residential ? c.residents[idx] : c.employees[idx];
+  }
+
+  /** Ferme une entreprise en faillite : employés licenciés, bâtiment vidé (la zone reste). */
+  closeBusiness(k: number): void {
+    this.society.citizens.fireAll(k);
+    this.clearBuilding(k);
+    this.events.emit('buildingsChanged', { tiles: [k] });
+    this.events.emit('notify', { text: 'Une entreprise a fait faillite et fermé (manque de clients, de marchandises ou de personnel)', kind: 'warn', tile: k });
   }
 
   capacity(idx: number): number {
@@ -582,47 +630,53 @@ export class Simulation {
   recomputeStats(): void {
     const w = this.world;
     const jobs = zeroByZone();
-    let population = 0, buildings = 0;
+    let buildings = 0;
     for (const idx of this.zonedTiles()) {
       if (w.bState[idx] !== BuildState.Built) continue;
       buildings++;
-      const cap = this.capacity(idx);
       const z = w.zones[idx] as ZoneType;
-      if (z === Zone.Residential) population += cap;
-      else jobs[z] += cap;
+      if (z !== Zone.Residential) jobs[z] += this.capacity(idx);
+    }
+    const cz = this.society.citizens;
+    const population = cz.population;
+    let employed = 0, jobless = 0, joblessHigh = 0, joblessLow = 0;
+    for (let c = 0; c < cz.count; c++) {
+      if (!cz.alive[c]) continue;
+      if (cz.status[c] === Status.Worker) employed++;
+      else if (cz.status[c] === Status.Unemployed) { jobless++; if (cz.edu[c] >= 3) joblessHigh++; if (cz.edu[c] <= 1) joblessLow++; }
     }
     this.utilities.happinessOffset = -(this.taxes[Zone.Residential] - DEFAULT_TAX) * 0.012 + this.env.happiness;
     this.utilities.consumptionMul = this.env.consumption(this.monthIndex);
     this.utilities.happinessOffset -= this.disasters.malus;
     this.utilities.offline = this.disasters.offline;
     this.utilities.windFactor = this.env.windFactor;
-    this.utilities.studentShare = this.demo.shares[1] + this.demo.shares[2] + this.demo.shares[3] * 0.25;
-    this.utilities.sickShare = this.demo.sick;
     this.utilities.compute();
     const totalJobs = jobs[Zone.Commercial] + jobs[Zone.Industrial] + jobs[Zone.Office];
-    const workers = this.demo.workers(population);
-    const unemployment = workers ? Math.max(0, workers - totalJobs) / workers : 0;
+    const workers = employed + jobless;
+    const unemployment = workers ? jobless / workers : 0;
 
+    // Demande calculée à partir des ménages, des emplois, des logements et des entreprises (§22)
+    const soc = this.society, bs = soc.stats;
     const demand = zeroByZone();
     const happy = population ? this.utilities.stats.happiness : 0.6;
-    demand[Zone.Residential] = clamp((totalJobs - workers + 45) / (workers * 0.4 + 60) + (happy - 0.55) * 0.6);
-    const wantC = population * 0.2;
-    demand[Zone.Commercial] = clamp((wantC - jobs[Zone.Commercial] + 6) / (wantC * 0.5 + 20));
-    const wantI = population * 0.28 + 12;
-    demand[Zone.Industrial] = clamp((wantI - jobs[Zone.Industrial]) / (wantI * 0.5 + 20));
-    const wantO = this.isUnlocked(Zone.Office) ? population * 0.12 * (0.5 + this.demo.education) : 0;
-    demand[Zone.Office] = this.isUnlocked(Zone.Office) ? clamp((wantO - jobs[Zone.Office] + 10) / (wantO * 0.5 + 25)) : 0;
+    const open = bs.openJobs[0] + bs.openJobs[1] + bs.openJobs[2];
+    demand[Zone.Residential] = clamp(0.3 + (open - jobless) / (population * 0.4 + 40) + (0.06 - soc.vacancy) * 5 + (happy - 0.55) * 0.8 - Math.max(0, soc.citizens.summaryBurden - 0.35));
+    const cSlots = bs.slots[0] + bs.slots[1] + bs.slots[2];
+    void cSlots;
+    const comCap = jobs[Zone.Commercial] * 2600 + 2000;
+    const cm = bs.avgMargin[Zone.Commercial];
+    demand[Zone.Commercial] = population ? clamp((bs.spending / comCap - 1) * 0.6 + (cm !== undefined ? cm * 3 : 0.3) + (jobless / Math.max(1, workers)) * 0.8) : -0.2;
+    const im = bs.avgMargin[Zone.Industrial];
+    demand[Zone.Industrial] = population ? clamp(Math.max(-0.5, (bs.goodsDemand - bs.goodsProduced) / (bs.goodsDemand + bs.goodsProduced + 5000)) * 0.6 + (joblessLow / Math.max(1, workers)) * 2 + (im !== undefined ? im * 2 : 0.25)) : -0.2;
+    demand[Zone.Office] = this.isUnlocked(Zone.Office) ? clamp((joblessHigh * 2 + soc.citizens.underemployedCount - bs.openJobs[2]) / (population * 0.04 + 15) + (this.demo.education - 0.3)) : 0;
     // Les impôts élevés freinent la demande, les impôts bas l'encouragent
     for (const z of [Zone.Residential, Zone.Commercial, Zone.Industrial, Zone.Office] as ZoneType[]) {
       if (z !== Zone.Office || this.isUnlocked(z)) demand[z] = clamp(demand[z] - (this.taxes[z] - DEFAULT_TAX) * 0.035);
     }
 
     // Recettes
-    const incomeBy: Record<string, number> = {};
-    incomeBy.residential = population * ZONE_INFO[Zone.Residential].tax * (this.taxes[Zone.Residential] / DEFAULT_TAX);
-    incomeBy.commercial = jobs[Zone.Commercial] * ZONE_INFO[Zone.Commercial].tax * (this.taxes[Zone.Commercial] / DEFAULT_TAX);
-    incomeBy.industrial = jobs[Zone.Industrial] * ZONE_INFO[Zone.Industrial].tax * (this.taxes[Zone.Industrial] / DEFAULT_TAX);
-    incomeBy.office = jobs[Zone.Office] * ZONE_INFO[Zone.Office].tax * (this.taxes[Zone.Office] / DEFAULT_TAX);
+    // Impôt sur le revenu des ménages et impôt sur les bénéfices des entreprises
+    const incomeBy: Record<string, number> = soc.taxIncome(this.taxes, 1);
     incomeBy.tickets = this.lastPassengers * TICKET_PRICE;
 
     // Dépenses
@@ -649,7 +703,7 @@ export class Simulation {
     const income = Object.values(incomeBy).reduce((a, b) => a + b, 0);
     const expenses = Object.values(expensesBy).reduce((a, b) => a + b, 0);
 
-    this.traffic.refreshBuildings((idx) => this.capacity(idx));
+    this.traffic.refreshBuildings((idx) => this.occupants(idx));
     const prevPop = this.stats.population;
     void prevPop;
     this.stats = { population, jobs, totalJobs, workers, buildings, demand, income, expenses, incomeBy, expensesBy, unemployment };
@@ -671,7 +725,9 @@ export class Simulation {
   private onNewMonth(): void {
     this.lastPassengers = this.transit.onNewMonth();
     const us = this.utilities.stats;
-    this.demo.monthly(this.stats.population, this.popAtMonthStart, us.happiness, us.coverage[Coverage.Health] ?? 0, us.coverage[Coverage.Education] ?? 0, us.air);
+    void us;
+    this.society.monthly();
+    this.syncDemographics();
     this.popAtMonthStart = this.stats.population;
     this.accumulateSoil();
     for (const l of this.loans) l.remaining--;

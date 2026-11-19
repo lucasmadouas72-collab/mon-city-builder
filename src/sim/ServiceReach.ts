@@ -69,8 +69,8 @@ export function computeReach(
   capacity: (idx: number) => number,
   budget: (s: Service) => number,
   density: Float32Array | null,
-  studentShare: number,
-  sickShare: number,
+  studentsOf: (idx: number) => number,
+  sickOf: (idx: number) => number,
   coverage: Uint8Array,
 ): { loads: Map<number, FacilityLoad>; stats: ReachStats } {
   const n = w.size;
@@ -158,8 +158,9 @@ export function computeReach(
       if (need <= 0 || left <= need * 0.5) coverage[b] |= bit;
     }
   };
-  assign(Service.School, Coverage.Education, (b) => capacity(b) * studentShare, 'school');
-  assign(Service.Clinic, Coverage.Health, (b) => capacity(b) * sickShare, 'clinic');
+  void capacity;
+  assign(Service.School, Coverage.Education, studentsOf, 'school');
+  assign(Service.Clinic, Coverage.Health, sickOf, 'clinic');
   for (const [s, L] of loads) {
     const type = w.service[s];
     if (type === Service.School) stats.seats += L.capacity;
