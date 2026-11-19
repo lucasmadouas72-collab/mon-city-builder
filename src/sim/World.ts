@@ -1,5 +1,6 @@
 import { MAP_SIZE, MAX_ROAD_SLOPE, SEA_LEVEL } from '../config';
 import { fbm, rng } from '../core/noise';
+import { MAX_BUILD_SLOPE, ZONE_DEPTH } from './zones';
 
 export const enum Tile {
   Empty = 0,
@@ -22,13 +23,75 @@ export class World {
   readonly trees: Uint8Array;
   readonly seed: number;
 
+  // Zonage et bâtiments (une case = un bâtiment)
+  readonly zones: Uint8Array;
+  readonly bState: Uint8Array;
+  readonly bLevel: Uint8Array;
+  readonly bVariant: Uint8Array;
+  /** Jours restants de chantier, ou âge du bâtiment. */
+  readonly bTimer: Uint16Array;
+  /** Distance (en cases) jusqu'à la route la plus proche, 255 si trop loin. */
+  readonly roadDist: Uint8Array;
+
   constructor(seed = 1337) {
     this.seed = seed;
     const n = this.size;
     this.heights = new Float32Array((n + 1) * (n + 1));
     this.tiles = new Uint8Array(n * n);
     this.trees = new Uint8Array(n * n);
+    this.zones = new Uint8Array(n * n);
+    this.bState = new Uint8Array(n * n);
+    this.bLevel = new Uint8Array(n * n);
+    this.bVariant = new Uint8Array(n * n);
+    this.bTimer = new Uint16Array(n * n);
+    this.roadDist = new Uint8Array(n * n).fill(255);
     this.generate();
+  }
+
+  /** Recalcule la distance aux routes (parcours en largeur sur la terre ferme). */
+  computeRoadDist(): void {
+    const n = this.size;
+    const dist = this.roadDist;
+    dist.fill(255);
+    let queue: number[] = [];
+    for (let k = 0; k < n * n; k++) if (this.tiles[k] === Tile.Road) { dist[k] = 0; queue.push(k); }
+    for (let d = 1; d <= ZONE_DEPTH + 1 && queue.length; d++) {
+      const next: number[] = [];
+      for (const k of queue) {
+        const i = k % n, j = (k - i) / n;
+        const nb = [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]];
+        for (const [a, b] of nb) {
+          if (!this.inBounds(a, b)) continue;
+          const q = b * n + a;
+          if (dist[q] !== 255 || this.isWater(a, b)) continue;
+          dist[q] = d;
+          next.push(q);
+        }
+      }
+      queue = next;
+    }
+  }
+
+  /** Raison pour laquelle on ne peut pas zoner la case, ou null. */
+  zoneBlocker(i: number, j: number): string | null {
+    if (!this.inBounds(i, j)) return 'Hors de la carte';
+    if (this.isRoad(i, j)) return 'Case occupée par une route';
+    if (this.isWater(i, j)) return "Impossible de zoner sur l'eau";
+    const [lo, hi] = this.tileMinMax(i, j);
+    if (hi - lo > MAX_BUILD_SLOPE) return 'Terrain trop pentu';
+    if (this.roadDist[this.index(i, j)] > ZONE_DEPTH) return 'Trop loin d\'une route';
+    return null;
+  }
+
+  /** Direction de la route la plus proche (bit N/E/S/W), pour orienter la façade. */
+  facing(i: number, j: number): number {
+    const order: Array<[number, number, number]> = [[i, j + 1, S], [i + 1, j, E], [i, j - 1, N], [i - 1, j, W]];
+    for (const [a, b, dir] of order) if (this.isRoad(a, b)) return dir;
+    const here = this.roadDist[this.index(i, j)];
+    for (const [a, b, dir] of order) {
+      if (this.inBounds(a, b) && this.roadDist[this.index(a, b)] < here) return dir;
+    }
+    return S;
   }
 
   // ---------- Génération ----------

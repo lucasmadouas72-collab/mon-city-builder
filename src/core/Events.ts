@@ -19,6 +19,9 @@ export class Emitter<M extends Record<string, unknown>> {
 export interface GameEvents extends Record<string, unknown> {
   roadsChanged: { tiles: number[] };
   treesChanged: void;
+  zonesChanged: void;
+  buildingsChanged: { tiles: number[] };
+  statsChanged: import('../sim/Simulation').CityStats;
   moneyChanged: number;
   dateChanged: { day: number; month: number; year: number };
   speedChanged: number;

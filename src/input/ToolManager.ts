@@ -3,8 +3,20 @@ import type { SceneRenderer } from '../render/SceneRenderer';
 import { OverlayColor } from '../render/Overlay';
 import type { Simulation } from '../sim/Simulation';
 import type { CameraController } from './CameraController';
+import { Zone, ZONE_INFO, type ZoneType } from '../sim/zones';
 
-export type ToolId = 'select' | 'road' | 'bulldoze';
+export type ToolId = 'select' | 'road' | 'zoneR' | 'zoneC' | 'zoneI' | 'zoneO' | 'dezone' | 'bulldoze';
+
+/** Zone appliquée par chaque outil de zonage. */
+export const TOOL_ZONE: Partial<Record<ToolId, Zone>> = {
+  zoneR: Zone.Residential, zoneC: Zone.Commercial, zoneI: Zone.Industrial, zoneO: Zone.Office, dezone: Zone.None,
+};
+const zoneColors = new Map<Zone, THREE.Color>();
+const zoneColor = (z: Zone) => {
+  let c = zoneColors.get(z);
+  if (!c) zoneColors.set(z, (c = z === Zone.None ? OverlayColor.demolish.clone() : new THREE.Color(ZONE_INFO[z as ZoneType].color)));
+  return c;
+};
 
 export interface HoverInfo {
   i: number;
@@ -50,6 +62,7 @@ export class ToolManager {
     });
     sim.events.on('roadsChanged', () => this.refresh());
     sim.events.on('moneyChanged', () => this.refresh());
+    sim.events.on('zonesChanged', () => this.refresh());
   }
 
   setTool(tool: ToolId): void {
@@ -106,8 +119,10 @@ export class ToolManager {
     const tiles = this.currentSelection();
     this.dragStart = null;
     if (tiles) {
+      const zone = TOOL_ZONE[this.tool];
       if (this.tool === 'road') this.sim.buildRoads(tiles);
       else if (this.tool === 'bulldoze') this.sim.bulldoze(tiles);
+      else if (zone !== undefined) this.sim.applyZone(tiles, zone);
     }
     this.refresh();
   }
@@ -128,7 +143,7 @@ export class ToolManager {
       const stepX = () => { while (i !== end.i) { i += sx; out.push(w.index(i, j)); } };
       const stepZ = () => { while (j !== end.j) { j += sz; out.push(w.index(i, j)); } };
       if (Math.abs(dx) >= Math.abs(dz)) { stepX(); stepZ(); } else { stepZ(); stepX(); }
-    } else if (this.tool === 'bulldoze') {
+    } else if (this.tool === 'bulldoze' || TOOL_ZONE[this.tool] !== undefined) {
       const [i0, i1] = [Math.min(start.i, end.i), Math.max(start.i, end.i)];
       const [j0, j1] = [Math.min(start.j, end.j), Math.max(start.j, end.j)];
       for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) out.push(w.index(i, j));
@@ -167,6 +182,16 @@ export class ToolManager {
       if (est.tiles.length) {
         const net = est.refund - est.cost;
         this.tip = { text: net >= 0 ? `Démolir · +${fmt(net)}` : `Défricher · ${fmt(-net)}`, kind: 'info' };
+      }
+    } else if (TOOL_ZONE[this.tool] !== undefined) {
+      const zone = TOOL_ZONE[this.tool]!;
+      const est = this.sim.estimateZone(tiles, zone);
+      ov.set([[est.valid, zoneColor(zone)], [est.invalid, OverlayColor.invalid]]);
+      if (est.valid.length) {
+        const label = zone === Zone.None ? 'Dézoner' : ZONE_INFO[zone as ZoneType].name;
+        this.tip = { text: `${label} · ${est.valid.length} case(s)`, kind: 'ok' };
+      } else if (est.reason) {
+        this.tip = { text: est.reason, kind: 'bad' };
       }
     } else {
       ov.set([[tiles, OverlayColor.hover]]);

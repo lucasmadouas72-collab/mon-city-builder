@@ -4,6 +4,8 @@ import { RoadMesh } from './RoadMesh';
 import { createTerrainMesh, createWater } from './TerrainMesh';
 import { Trees } from './Trees';
 import { Overlay } from './Overlay';
+import { Buildings } from './Buildings';
+import { BuildState, ZONE_INFO, type ZoneType } from '../sim/zones';
 
 function createSky(): THREE.Mesh {
   const geo = new THREE.SphereGeometry(900, 32, 16);
@@ -34,6 +36,9 @@ export class SceneRenderer {
   readonly roads: RoadMesh;
   readonly trees: Trees;
   readonly overlay: Overlay;
+  readonly zoneOverlay: Overlay;
+  readonly buildings: Buildings;
+  private zoneColors = new Map<number, THREE.Color>();
   private water: ReturnType<typeof createWater>;
   private sun: THREE.DirectionalLight;
   private sky: THREE.Mesh;
@@ -76,7 +81,10 @@ export class SceneRenderer {
     this.roads = new RoadMesh(world);
     this.trees = new Trees(world);
     this.overlay = new Overlay(world);
-    this.scene.add(this.terrain, this.water.mesh, this.roads.mesh, this.trees.group, this.overlay.group);
+    this.zoneOverlay = new Overlay(world, { lift: 0.04, opacity: 0.32, pulse: false, inset: 0.06 });
+    this.buildings = new Buildings(world);
+    this.scene.add(this.terrain, this.water.mesh, this.roads.mesh, this.trees.group, this.zoneOverlay.group, this.buildings.group, this.overlay.group);
+    this.refreshZones(world);
 
     // Sol lointain sous la maquette
     const ground = new THREE.Mesh(
@@ -90,6 +98,23 @@ export class SceneRenderer {
     window.addEventListener('resize', () => this.resize(container));
   }
 
+  /** Teinte les cases zonées encore vides. */
+  refreshZones(world: World): void {
+    const layers = new Map<number, number[]>();
+    for (let k = 0; k < world.zones.length; k++) {
+      const z = world.zones[k];
+      if (!z || world.bState[k] !== BuildState.Empty) continue;
+      let l = layers.get(z);
+      if (!l) layers.set(z, (l = []));
+      l.push(k);
+    }
+    this.zoneOverlay.set([...layers].map(([z, tiles]) => {
+      let c = this.zoneColors.get(z);
+      if (!c) this.zoneColors.set(z, (c = new THREE.Color(ZONE_INFO[z as ZoneType].color)));
+      return [tiles, c] as [number[], THREE.Color];
+    }));
+  }
+
   private resize(container: HTMLElement): void {
     this.camera.aspect = container.clientWidth / container.clientHeight;
     this.camera.updateProjectionMatrix();
@@ -99,6 +124,7 @@ export class SceneRenderer {
   render(time: number): void {
     this.water.update(time);
     this.overlay.update(time);
+    this.buildings.update(time);
     this.sky.position.copy(this.camera.position);
     this.renderer.render(this.scene, this.camera);
   }

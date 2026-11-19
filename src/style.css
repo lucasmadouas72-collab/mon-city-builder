@@ -90,7 +90,7 @@ kbd {
 .toast.out { opacity: 0; transform: translateY(-6px); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } }
 
-.help { position: absolute; right: 12px; bottom: 16px; padding: 12px 34px 12px 14px; font-size: 12.5px; line-height: 1.75; color: var(--muted); max-width: 420px; }
+.help { position: absolute; right: 12px; top: 78px; padding: 12px 34px 12px 14px; font-size: 12.5px; line-height: 1.75; color: var(--muted); max-width: 420px; }
 .help b { color: var(--text); }
 #help-close { position: absolute; top: 6px; right: 8px; font-size: 18px; color: var(--muted); }
 
@@ -100,6 +100,32 @@ kbd {
 
 @media (max-width: 900px) {
   .topbar { gap: 12px; }
-  .stat:nth-of-type(3), .stat:nth-of-type(4), .date, .help { display: none; }
+  .stat:nth-of-type(n+3), .demand, .date, .help { display: none; }
   .info { display: none; }
+}
+
+/* ---- Phase 2 : zones et demande ---- */
+.stat .value.positive { color: var(--accent); }
+.demand { display: flex; gap: 6px; align-items: flex-end; height: 40px; padding: 0 4px; }
+.demand .bar { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.demand .track { position: relative; width: 9px; height: 26px; border-radius: 3px; background: rgba(255,255,255,0.07); overflow: hidden; }
+.demand .track::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: rgba(255,255,255,0.18); }
+.demand i { position: absolute; left: 0; right: 0; background: var(--c); transition: height 0.4s, bottom 0.4s; }
+.demand i.neg { opacity: 0.45; }
+.demand span { font-size: 10px; font-weight: 700; color: var(--c); }
+.demand .bar.locked { opacity: 0.3; }
+
+.toolbar button { width: 74px; }
+.toolbar button.sep { margin-right: 10px; }
+.toolbar button.sep::after { content: ''; position: absolute; right: -8px; top: 12px; bottom: 12px; width: 1px; background: var(--line); }
+.toolbar button[style*="--zc"] svg { color: var(--zc); }
+.toolbar button[style*="--zc"].active { background: color-mix(in srgb, var(--zc) 18%, transparent); color: var(--text); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--zc) 55%, transparent); }
+.toolbar button.locked { opacity: 0.35; }
+.info .dot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 7px; vertical-align: 1px; }
+.info { width: 220px; }
+
+@media (max-width: 1100px) {
+  .toolbar button { width: 58px; font-size: 10.5px; }
+  .toolbar button span { overflow: hidden; text-overflow: ellipsis; max-width: 54px; white-space: nowrap; }
+  .help { display: none; }
 }

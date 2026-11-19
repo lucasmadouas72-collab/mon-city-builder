@@ -21,7 +21,8 @@ Puis ouvrir l'adresse affichée (http://localhost:5173).
 | Tourner la caméra | clic droit, ou A / E |
 | Zoomer | molette |
 | Déplacer la caméra | clic molette, ou Z Q S D / flèches |
-| Outils | 1 Sélection · 2 Route · 3 Démolir |
+| Outils | 1 Sélection · 2 Route · 3 Résidentiel · 4 Commercial · 5 Industriel · 6 Bureaux · 7 Dézoner · 8 Démolir |
+| Zoner | cliquer-glisser une zone près d'une route |
 | Tracer une route | cliquer-glisser |
 | Pause | Espace |
 | Annuler | Échap |
@@ -29,7 +30,7 @@ Puis ouvrir l'adresse affichée (http://localhost:5173).
 ## Avancement
 
 - [x] **Phase 1** : rendu 3D low-poly, relief avec rivière et lac, forêts, caméra, routes, démolition, budget
-- [ ] Phase 2 : zonage, croissance des bâtiments, demande
+- [x] **Phase 2** : zonage (R, C, I, bureaux), demande, bâtiments procéduraux sur 3 niveaux, valeur foncière, impôts
 - [ ] Phase 3 : habitants, véhicules, trafic
 - [ ] Phase 4 : réseaux (eau, électricité) et services
 - [ ] Phase 5 : économie complète, transports en commun, vues de données

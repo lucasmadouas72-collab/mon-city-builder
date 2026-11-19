@@ -9,7 +9,13 @@ export const OverlayColor = {
 };
 
 const MAX_TILES = 20_000;
-const LIFT = 0.12;
+
+export interface OverlayOptions {
+  lift?: number;
+  opacity?: number;
+  pulse?: boolean;
+  inset?: number;
+}
 
 /** Surbrillance de cases (aperçu de construction, survol), plaquée sur le relief. */
 export class Overlay {
@@ -19,7 +25,16 @@ export class Overlay {
   private colors: Float32Array;
   private material: THREE.MeshBasicMaterial;
 
-  constructor(private world: World) {
+  private lift: number;
+  private baseOpacity: number;
+  private pulse: boolean;
+  private inset: number;
+
+  constructor(private world: World, opts: OverlayOptions = {}) {
+    this.lift = opts.lift ?? 0.12;
+    this.baseOpacity = opts.opacity ?? 0.4;
+    this.pulse = opts.pulse ?? true;
+    this.inset = opts.inset ?? 0.04;
     this.positions = new Float32Array(MAX_TILES * 6 * 3);
     this.colors = new Float32Array(MAX_TILES * 6 * 3);
     const geo = new THREE.BufferGeometry();
@@ -27,7 +42,7 @@ export class Overlay {
     geo.setAttribute('color', new THREE.BufferAttribute(this.colors, 3).setUsage(THREE.DynamicDrawUsage));
     geo.setDrawRange(0, 0);
     this.material = new THREE.MeshBasicMaterial({
-      vertexColors: true, transparent: true, opacity: 0.45, depthWrite: false,
+      vertexColors: true, transparent: true, opacity: this.baseOpacity, depthWrite: false,
       polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
     });
     this.mesh = new THREE.Mesh(geo, this.material);
@@ -40,7 +55,7 @@ export class Overlay {
   set(layers: Array<[number[], THREE.Color]>): void {
     const w = this.world;
     let v = 0;
-    const inset = 0.04;
+    const inset = this.inset;
     for (const [tiles, c] of layers) {
       for (const idx of tiles) {
         if (v >= MAX_TILES * 6) break;
@@ -52,7 +67,7 @@ export class Overlay {
         for (const [x, z] of pts) {
           const o = v * 3;
           this.positions[o] = x;
-          this.positions[o + 1] = w.heightAt(x, z) + LIFT;
+          this.positions[o + 1] = w.heightAt(x, z) + this.lift;
           this.positions[o + 2] = z;
           this.colors[o] = c.r; this.colors[o + 1] = c.g; this.colors[o + 2] = c.b;
           v++;
@@ -70,6 +85,6 @@ export class Overlay {
   }
 
   update(time: number): void {
-    this.material.opacity = 0.38 + Math.sin(time * 4) * 0.08;
+    if (this.pulse) this.material.opacity = this.baseOpacity + Math.sin(time * 4) * 0.08;
   }
 }
