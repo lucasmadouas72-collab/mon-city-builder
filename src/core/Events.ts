@@ -30,5 +30,5 @@ export interface GameEvents extends Record<string, unknown> {
   moneyChanged: number;
   dateChanged: { day: number; month: number; year: number };
   speedChanged: number;
-  notify: { text: string; kind?: 'info' | 'warn' | 'error' };
+  notify: { text: string; kind?: 'info' | 'warn' | 'error'; tile?: number };
 }

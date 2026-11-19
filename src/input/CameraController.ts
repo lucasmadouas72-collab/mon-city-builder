@@ -36,6 +36,13 @@ export class CameraController {
     window.addEventListener('blur', () => this.keys.clear());
   }
 
+  private focusTarget: THREE.Vector3 | null = null;
+
+  /** Déplace doucement la caméra vers un point de la carte. */
+  focus(x: number, z: number): void {
+    this.focusTarget = new THREE.Vector3(x, 0, z);
+  }
+
   setLeftPan(enabled: boolean): void {
     this.controls.mouseButtons.LEFT = enabled ? THREE.MOUSE.PAN : null;
   }
@@ -67,6 +74,13 @@ export class CameraController {
       const off = new THREE.Vector3().subVectors(this.camera.position, c.target);
       off.applyAxisAngle(new THREE.Vector3(0, 1, 0), rot * 1.6 * dt);
       this.camera.position.copy(c.target).add(off);
+    }
+
+    if (this.focusTarget) {
+      const step = this.focusTarget.clone().sub(c.target).multiplyScalar(Math.min(1, dt * 5));
+      c.target.add(step);
+      this.camera.position.add(step);
+      if (c.target.distanceTo(this.focusTarget) < 0.05) this.focusTarget = null;
     }
 
     // Garder la cible au-dessus de la carte

@@ -20,6 +20,9 @@ export interface UtilityStats {
   /** Part des bâtiments couverts, par service (clé = bit Coverage). */
   coverage: Record<number, number>;
   burning: number;
+  /** Pollution moyenne de l'air et du bruit sur les cases bâties (0 à 1). */
+  air: number;
+  noise: number;
 }
 
 /**
@@ -38,6 +41,11 @@ export class Utilities {
   readonly problemDays: Uint16Array;
   /** Jours d'incendie restants (0 = pas de feu). */
   readonly fire: Uint8Array;
+  /** Pollution de l'air et sonore (0 à ~1). */
+  readonly air: Float32Array;
+  readonly noise: Float32Array;
+  /** Densité de trafic par case (fournie par le trafic). */
+  trafficDensity: Float32Array | null = null;
   /** Réseau routier connexe de chaque case de route (-1 sinon). */
   private component: Int32Array;
   private spare: Map<number, number[]> = new Map();
@@ -47,7 +55,7 @@ export class Utilities {
   happinessOffset = 0;
   /** Multiplicateurs de consommation (saison, météo). */
   consumptionMul = [1, 1, 1, 1];
-  stats: UtilityStats = { supply: [0, 0, 0, 0], demand: [0, 0, 0, 0], served: [0, 0, 0, 0], happiness: 0, coverage: {}, burning: 0 };
+  stats: UtilityStats = { supply: [0, 0, 0, 0], demand: [0, 0, 0, 0], served: [0, 0, 0, 0], happiness: 0, coverage: {}, burning: 0, air: 0, noise: 0 };
 
   constructor(private world: World, private access: (idx: number) => number, private capacity: (idx: number) => number) {
     const n = world.size * world.size;
@@ -57,6 +65,8 @@ export class Utilities {
     this.happiness = new Float32Array(n);
     this.problemDays = new Uint16Array(n);
     this.fire = new Uint8Array(n);
+    this.air = new Float32Array(n);
+    this.noise = new Float32Array(n);
     this.component = new Int32Array(n);
   }
 
@@ -79,6 +89,45 @@ export class Utilities {
         if (j > 0 && w.tiles[cur - n] === 1 && comp[cur - n] === -1) { comp[cur - n] = label; stack.push(cur - n); }
       }
       label++;
+    }
+  }
+
+  /** Pollution de l'air (industrie, centrales, trafic) et sonore (trafic, industrie, commerces). */
+  private computePollution(): void {
+    const w = this.world, n = w.size;
+    const air = this.air, noise = this.noise;
+    air.fill(0);
+    noise.fill(0);
+    const splat = (field: Float32Array, i: number, j: number, amount: number, r: number) => {
+      if (amount <= 0) return;
+      for (let b = Math.max(0, j - r); b <= Math.min(n - 1, j + r); b++) {
+        for (let a = Math.max(0, i - r); a <= Math.min(n - 1, i + r); a++) {
+          const d = Math.hypot(a - i, b - j);
+          if (d <= r) field[b * n + a] += amount * (1 - d / (r + 1));
+        }
+      }
+    };
+    for (let idx = 0; idx < w.tiles.length; idx++) {
+      const i = idx % n, j = (idx - i) / n;
+      if (w.bState[idx] === BuildState.Built) {
+        const z = w.zones[idx], lvl = w.bLevel[idx];
+        if (z === Zone.Industrial) { splat(air, i, j, 0.07 * lvl, 5); splat(noise, i, j, 0.06, 3); }
+        else if (z === Zone.Commercial) splat(noise, i, j, 0.025 * lvl, 2);
+      }
+      const s = w.service[idx];
+      if (s === Service.PowerPlant) splat(air, i, j, 0.35, 8);
+      else if (s === Service.Landfill) splat(air, i, j, 0.12, 4);
+      if (w.tiles[idx] === 1 && this.trafficDensity) {
+        const d = Math.min(6, this.trafficDensity[idx]);
+        if (d > 0.05) { splat(noise, i, j, d * 0.05, 2); splat(air, i, j, d * 0.02, 2); }
+      }
+      // Les arbres et les parcs absorbent un peu de pollution
+      if (w.trees[idx]) air[idx] -= 0.02 * w.trees[idx];
+    }
+    for (let k = 0; k < air.length; k++) {
+      if (this.coverage[k] & Coverage.Park) { air[k] *= 0.8; noise[k] *= 0.85; }
+      air[k] = Math.max(0, Math.min(1, air[k]));
+      noise[k] = Math.max(0, Math.min(1, noise[k]));
     }
   }
 
@@ -172,6 +221,8 @@ export class Utilities {
       this.spare.set(net, sup.map((s, u) => s - dem[u]));
     }
 
+    this.computePollution();
+
     // Distribution : si la production manque, une partie des bâtiments n'est pas desservie
     const servedCount = [0, 0, 0, 0];
     let buildings = 0, happySum = 0, happyWeight = 0;
@@ -205,6 +256,7 @@ export class Utilities {
       if (cov & Coverage.Fire) h += 0.04;
       if (cov & Coverage.Park) h += 0.07;
       h -= this.nuisance[idx];
+      h -= Math.min(0.35, this.air[idx] * 0.45 + this.noise[idx] * 0.25);
       h += this.happinessOffset;
       if (this.fire[idx]) h -= 0.3;
       h = Math.max(0, Math.min(1, h));
@@ -216,7 +268,8 @@ export class Utilities {
 
     const coverage: Record<number, number> = {};
     for (const c in covCount) coverage[c] = buildings ? covCount[c] / buildings : 0;
-    let burning = 0;
+    let burning = 0, airSum = 0, noiseSum = 0;
+    for (let k = 0; k < w.bState.length; k++) if (w.bState[k] === BuildState.Built) { airSum += this.air[k]; noiseSum += this.noise[k]; }
     for (let k = 0; k < this.fire.length; k++) if (this.fire[k]) burning++;
     this.stats = {
       supply: totalSupply.map(Math.round),
@@ -225,6 +278,8 @@ export class Utilities {
       happiness: happyWeight ? happySum / happyWeight : 0,
       coverage,
       burning,
+      air: buildings ? airSum / buildings : 0,
+      noise: buildings ? noiseSum / buildings : 0,
     };
   }
 }

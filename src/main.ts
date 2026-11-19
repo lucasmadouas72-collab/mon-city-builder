@@ -29,7 +29,8 @@ tools.onDraft = (kind, tiles) => transitView.setDraft(kind, tiles);
 const atmosphere = new Atmosphere(view, world);
 view.scene.add(atmosphere.group);
 sim.events.on('transitChanged', () => transitView.rebuild());
-new Hud(document.getElementById('hud')!, sim, tools, dataView);
+const hud = new Hud(document.getElementById('hud')!, sim, tools, dataView);
+hud.focus = (x, z) => cam.focus(x, z);
 tools.setTool('road');
 
 sim.events.on('roadsChanged', () => {

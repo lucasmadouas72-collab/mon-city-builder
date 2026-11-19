@@ -6,7 +6,7 @@ import { Overlay } from './Overlay';
 
 export type ViewMode =
   | 'none' | 'traffic' | 'power' | 'water' | 'sewage' | 'garbage'
-  | 'health' | 'education' | 'police' | 'fire' | 'park' | 'happiness' | 'land' | 'transport';
+  | 'health' | 'education' | 'police' | 'fire' | 'park' | 'happiness' | 'land' | 'transport' | 'air' | 'noise';
 
 export const VIEW_LABELS: Array<[ViewMode, string]> = [
   ['traffic', 'Trafic'],
@@ -20,6 +20,8 @@ export const VIEW_LABELS: Array<[ViewMode, string]> = [
   ['police', 'Police'],
   ['fire', 'Pompiers'],
   ['park', 'Parcs'],
+  ['air', "Pollution de l'air"],
+  ['noise', 'Pollution sonore'],
   ['happiness', 'Bonheur'],
   ['land', 'Valeur foncière'],
 ];
@@ -39,6 +41,7 @@ const COV: Partial<Record<ViewMode, [Coverage, Service]>> = {
 };
 
 const TRAFFIC_LEVELS: Array<[number, string]> = [[0.35, '#22c55e'], [1.0, '#a3e635'], [1.8, '#facc15'], [2.8, '#f97316'], [Infinity, '#ef4444']];
+const POLL = ['#fde68a', '#fbbf24', '#f97316', '#dc2626', '#7f1d1d'];
 const RAMP = ['#ef4444', '#f97316', '#facc15', '#a3e635', '#22c55e'];
 
 /** Vues de données : colore les cases selon le trafic, les réseaux, la couverture, le bonheur… */
@@ -116,6 +119,9 @@ export class DataView {
         else if (built) add('#7f1d1d', idx);
       } else if (m === 'happiness') {
         if (built) add(ramp(ut.happiness[idx]), idx);
+      } else if (m === 'air' || m === 'noise') {
+        const v = (m === 'air' ? ut.air : ut.noise)[idx];
+        if (v > 0.04) add(POLL[Math.min(4, Math.floor(v * 6))], idx);
       } else if (m === 'transport') {
         if (built && this.transitCover(idx)) add('#38bdf8', idx);
       } else if (m === 'land') {

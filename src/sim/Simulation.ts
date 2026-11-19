@@ -7,6 +7,7 @@ import { Tile, World } from './World';
 import { Traffic } from './Traffic';
 import { Utilities } from './Utilities';
 import { Environment } from './Environment';
+import { Demographics } from './Population';
 import { Transit, type TransitKind } from './Transit';
 import {
   BUDGET_KEYS, BUS_STOP_COST, BUS_UNLOCK, BUS_UPKEEP, DEFAULT_TAX, LOAN_OFFERS, MAX_LOANS, MAX_TAX, METRO_LINE_UPKEEP,
@@ -26,6 +27,19 @@ export interface CostEstimate {
   reason: string | null;
 }
 
+export interface HistoryPoint {
+  month: number;
+  pop: number;
+  money: number;
+  income: number;
+  expenses: number;
+  happiness: number;
+  unemployment: number;
+  air: number;
+  flow: number;
+  jobs: number;
+}
+
 export interface CityStats {
   population: number;
   jobs: Record<ZoneType, number>;
@@ -39,6 +53,7 @@ export interface CityStats {
   /** Détail mensuel des recettes et dépenses. */
   incomeBy: Record<string, number>;
   expensesBy: Record<string, number>;
+  unemployment: number;
 }
 
 const zeroByZone = (): Record<ZoneType, number> => ({ [Zone.Residential]: 0, [Zone.Commercial]: 0, [Zone.Industrial]: 0, [Zone.Office]: 0 });
@@ -55,7 +70,7 @@ export class Simulation {
   roadCount = 0;
   stats: CityStats = {
     population: 0, jobs: zeroByZone(), totalJobs: 0, workers: 0, buildings: 0,
-    demand: zeroByZone(), income: 0, expenses: 0, incomeBy: {}, expensesBy: {},
+    demand: zeroByZone(), income: 0, expenses: 0, incomeBy: {}, expensesBy: {}, unemployment: 0,
   };
   taxes = defaultTaxes();
   budgets = defaultBudgets();
@@ -76,6 +91,10 @@ export class Simulation {
   readonly utilities: Utilities;
   readonly transit: Transit;
   readonly env = new Environment();
+  readonly demo = new Demographics();
+  /** Historique mensuel pour les statistiques. */
+  history: HistoryPoint[] = [];
+  private popAtMonthStart = 0;
   private lastUtilityHint = -999;
 
   constructor(world: World) {
@@ -83,6 +102,7 @@ export class Simulation {
     this.traffic = new Traffic(world);
     this.utilities = new Utilities(world, (idx) => this.traffic.roadAccess(idx), (idx) => this.capacity(idx));
     this.utilities.budget = (k) => this.budgets[k] / 100;
+    this.utilities.trafficDensity = this.traffic.density;
     this.transit = new Transit(world, this.traffic);
     this.recomputeStats();
   }
@@ -228,11 +248,12 @@ export class Simulation {
         if (ut.fire[idx] === 0 && !covered) {
           this.clearBuilding(idx);
           changed.push(idx);
-          this.events.emit('notify', { text: 'Un bâtiment a brûlé (pas de caserne à proximité)', kind: 'warn' });
+          this.events.emit('notify', { text: 'Un bâtiment a brûlé (pas de caserne à proximité)', kind: 'warn', tile: idx });
         }
         if (!ut.fire[idx]) this.events.emit('firesChanged', undefined);
-      } else if (this.rand() < (covered ? 0.00004 : 0.00022) * w.bLevel[idx]) {
+      } else if (this.rand() < (covered ? 0.00001 : 0.00006) * w.bLevel[idx]) {
         ut.fire[idx] = 8;
+        this.events.emit('notify', { text: covered ? 'Incendie déclaré, les pompiers interviennent' : 'Incendie déclaré, aucune caserne à proximité !', kind: 'warn', tile: idx });
         this.events.emit('firesChanged', undefined);
       }
     }
@@ -340,6 +361,7 @@ export class Simulation {
     if (cov & Coverage.Fire) v += 0.03;
     if (cov & Coverage.Park) v += 0.09;
     v -= this.utilities.nuisance[idx];
+    v -= this.utilities.air[idx] * 0.4 + this.utilities.noise[idx] * 0.2;
     return clamp(v, 0, 1);
   }
 
@@ -379,7 +401,8 @@ export class Simulation {
     this.utilities.consumptionMul = this.env.consumption(this.monthIndex);
     this.utilities.compute();
     const totalJobs = jobs[Zone.Commercial] + jobs[Zone.Industrial] + jobs[Zone.Office];
-    const workers = Math.round(population * 0.55);
+    const workers = this.demo.workers(population);
+    const unemployment = workers ? Math.max(0, workers - totalJobs) / workers : 0;
 
     const demand = zeroByZone();
     const happy = population ? this.utilities.stats.happiness : 0.6;
@@ -388,7 +411,7 @@ export class Simulation {
     demand[Zone.Commercial] = clamp((wantC - jobs[Zone.Commercial] + 6) / (wantC * 0.5 + 20));
     const wantI = population * 0.28 + 12;
     demand[Zone.Industrial] = clamp((wantI - jobs[Zone.Industrial]) / (wantI * 0.5 + 20));
-    const wantO = this.isUnlocked(Zone.Office) ? population * 0.12 : 0;
+    const wantO = this.isUnlocked(Zone.Office) ? population * 0.12 * (0.5 + this.demo.education) : 0;
     demand[Zone.Office] = this.isUnlocked(Zone.Office) ? clamp((wantO - jobs[Zone.Office] + 10) / (wantO * 0.5 + 25)) : 0;
     // Les impôts élevés freinent la demande, les impôts bas l'encouragent
     for (const z of [Zone.Residential, Zone.Commercial, Zone.Industrial, Zone.Office] as ZoneType[]) {
@@ -423,7 +446,7 @@ export class Simulation {
     this.traffic.refreshBuildings((idx) => this.capacity(idx));
     const prevPop = this.stats.population;
     void prevPop;
-    this.stats = { population, jobs, totalJobs, workers, buildings, demand, income, expenses, incomeBy, expensesBy };
+    this.stats = { population, jobs, totalJobs, workers, buildings, demand, income, expenses, incomeBy, expensesBy, unemployment };
     if (population > this.maxPop) this.maxPop = population;
     const m = milestoneIndex(this.maxPop);
     if (m > this.milestone) {
@@ -440,11 +463,22 @@ export class Simulation {
 
   private onNewMonth(): void {
     this.lastPassengers = this.transit.onNewMonth();
+    const us = this.utilities.stats;
+    this.demo.monthly(this.stats.population, this.popAtMonthStart, us.happiness, us.coverage[Coverage.Health] ?? 0, us.coverage[Coverage.Education] ?? 0, us.air);
+    this.popAtMonthStart = this.stats.population;
     for (const l of this.loans) l.remaining--;
     const done = this.loans.filter((l) => l.remaining <= 0).length;
     if (done) this.events.emit('notify', { text: 'Emprunt entièrement remboursé', kind: 'info' });
     this.recomputeStats();
     this.loans = this.loans.filter((l) => l.remaining > 0);
+    this.history.push({
+      month: this.monthIndex, pop: this.stats.population, money: Math.round(this.money), income: this.stats.income,
+      expenses: this.stats.expenses, happiness: us.happiness, unemployment: this.stats.unemployment, air: us.air,
+      flow: this.traffic.flow, jobs: this.stats.totalJobs,
+    });
+    if (this.history.length > 360) this.history.shift();
+    if (this.money < 0) this.events.emit('notify', { text: 'Le budget municipal est dans le rouge : augmentez les impôts ou réduisez les dépenses', kind: 'error' });
+    if (this.stats.unemployment > 0.15 && this.stats.population > 200) this.events.emit('notify', { text: `Le chômage atteint ${Math.round(this.stats.unemployment * 100)} % : zonez des commerces, industries ou bureaux`, kind: 'warn' });
     const net = this.stats.income - this.stats.expenses;
     if (net !== 0) {
       this.money += net;

@@ -1,5 +1,7 @@
 import { GAME_NAME } from '../config';
 import { BudgetPanel } from './BudgetPanel';
+import { StatsPanel } from './StatsPanel';
+import { companyName, residentsOf } from '../sim/names';
 import { BUS_STOP_COST, BUS_UNLOCK, MILESTONES } from '../sim/economy';
 import { SEASON_NAMES, WEATHER_NAMES } from '../sim/Environment';
 import { fmt, type HoverInfo, type ToolId, type ToolManager, type Tooltip } from '../input/ToolManager';
@@ -22,6 +24,8 @@ const ICONS: Record<string, string> = {
   utilities: '<path d="M13 2L5 14h6l-1 8 8-12h-6z"/>',
   transport: '<rect x="5" y="3" width="14" height="14" rx="3"/><path d="M5 11h14"/><circle cx="8.5" cy="14" r="1"/><circle cx="15.5" cy="14" r="1"/><path d="M7 17l-1.5 3M17 17l1.5 3"/>',
   services: '<path d="M3 21h18M5 21V10l7-5 7 5v11"/><path d="M10 21v-5h4v5"/>',
+  stats: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  bell: '<path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
   layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5" opacity=".6"/>',
   pause: '<path d="M8 5v14M16 5v14"/>',
   play1: '<path d="M8 5l11 7-11 7z"/>',
@@ -74,6 +78,11 @@ export class Hud {
   private el = (sel: string) => this.root.querySelector(sel) as HTMLElement;
   private openGroup: string | null = null;
   private budget!: BudgetPanel;
+  private stats!: StatsPanel;
+  private journal: Array<{ date: string; text: string; kind: string; tile?: number }> = [];
+  private unread = 0;
+  /** Centre la caméra sur une case (fourni par le jeu). */
+  focus?: (x: number, z: number) => void;
 
   constructor(private root: HTMLElement, private sim: Simulation, private tools: ToolManager, views: DataView) {
     root.innerHTML = `
@@ -90,6 +99,8 @@ export class Hud {
         </div>
         <div class="spacer"></div>
         <div class="milestone" id="milestone" title=""><span class="ms-name"></span><div class="ms-bar"><i></i></div></div>
+        <button class="icon-btn" id="stats-btn" title="Statistiques">${icon('stats')}</button>
+        <button class="icon-btn" id="journal-btn" title="Journal de la ville">${icon('bell')}<i class="badge" id="journal-badge" hidden></i></button>
         <div class="views">
           <button id="views-btn" title="Vues de données (T : trafic)">${icon('layers')}<span id="views-label">Vues</span></button>
           <div class="views-menu panel" id="views-menu" hidden>
@@ -116,6 +127,7 @@ export class Hud {
       <div class="tooltip" id="tooltip" hidden></div>
       <div class="modal-wrap" id="ms-popup" hidden><div class="modal panel ms-modal"><div class="ms-kicker">Nouveau palier</div><h2 id="ms-title"></h2><p id="ms-text"></p><button class="primary" id="ms-ok">Continuer</button></div></div>
       <div class="toasts" id="toasts"></div>
+      <aside class="journal panel" id="journal" hidden><div class="journal-head"><b>Journal de la ville</b><button id="journal-close" aria-label="Fermer">×</button></div><ol id="journal-list"></ol></aside>
       <div class="help panel" id="help">
         <b>Pour bien démarrer</b>
         <div>1. Tracez des routes · 2. Zonez le long des routes · 3. Menu <b>Réseaux</b> : une centrale (ou des éoliennes) et une station de pompage près de l'eau, reliées au même réseau routier.</div>
@@ -147,6 +159,18 @@ export class Hud {
     });
     views.onChange = (m) => this.updateViews(m);
     this.budget = new BudgetPanel(root, sim);
+    this.stats = new StatsPanel(root, sim);
+    this.el('#stats-btn').addEventListener('click', () => this.stats.toggle());
+    this.el('#journal-btn').addEventListener('click', () => this.toggleJournal());
+    this.el('#journal-close').addEventListener('click', () => this.toggleJournal(false));
+    this.el('#journal-list').addEventListener('click', (e) => {
+      const li = (e.target as HTMLElement).closest<HTMLElement>('[data-tile]');
+      if (li) this.focusTile(Number(li.dataset.tile));
+    });
+    this.el('#toasts').addEventListener('click', (e) => {
+      const t = (e.target as HTMLElement).closest<HTMLElement>('[data-tile]');
+      if (t) this.focusTile(Number(t.dataset.tile));
+    });
     this.el('#budget-btn').addEventListener('click', () => this.budget.toggle());
     this.el('#ms-ok').addEventListener('click', () => (this.el('#ms-popup').hidden = true));
     sim.events.on('milestone', ({ index }) => {
@@ -174,7 +198,7 @@ export class Hud {
     sim.events.on('dateChanged', () => this.updateDate());
     sim.events.on('speedChanged', () => this.updateSpeed());
     sim.events.on('statsChanged', (st) => this.updateStats(st));
-    sim.events.on('notify', (n) => this.toast(n.text, n.kind ?? 'info'));
+    sim.events.on('notify', (n) => { this.toast(n.text, n.kind ?? 'info', n.tile); this.log(n.text, n.kind ?? 'info', n.tile); });
     tools.onToolChange = (t) => this.updateTool(t);
     tools.onHover = (h) => this.updateInfo(h);
     tools.onTooltip = (t) => this.updateTooltip(t);
@@ -333,7 +357,11 @@ export class Hud {
         const cap = this.sim.capacity(idx);
         const okU = (u: Utility) => ut.hasUtility(idx, u);
         const icons = UTILITIES.map((u) => `<span class="u ${okU(u) ? 'ok' : 'ko'}" title="${UTILITY_NAMES[u]}" style="--c:${UTILITY_COLORS[u]}">${UTILITY_SHORT[u]}</span>`).join('');
-        extra = `<dt>Bâtiment</dt><dd>${LEVEL_NAMES[w.bLevel[idx]]}</dd>
+        const people = zone === Zone.Residential
+          ? `<dt class="wide">Quelques habitants</dt>${residentsOf(idx, Math.min(3, cap), this.sim.demo.education).map((p) => `<dd class="wide person">${p.name}, ${p.age} ans · ${p.occupation}</dd>`).join('')}`
+          : `<dt>Entreprise</dt><dd>${companyName(idx, zone)}</dd>`;
+        extra = `${people}<dt>Bâtiment</dt><dd>${LEVEL_NAMES[w.bLevel[idx]]}</dd>
+          <dt>Pollution</dt><dd>air ${Math.round(ut.air[idx] * 100)} % · bruit ${Math.round(ut.noise[idx] * 100)} %</dd>
           <dt>${zone === Zone.Residential ? 'Habitants' : 'Emplois'}</dt><dd>${cap}</dd>
           <dt>Réseaux</dt><dd>${icons}</dd>
           <dt>Bonheur</dt><dd>${Math.round(ut.happiness[idx] * 100)} %</dd>
@@ -364,11 +392,42 @@ export class Hud {
     el.style.transform = `translate(${t.x + 16}px, ${t.y + 18}px)`;
   }
 
-  toast(text: string, kind: string): void {
+  private focusTile(idx: number): void {
+    const n = this.sim.world.size;
+    this.focus?.((idx % n) + 0.5, Math.floor(idx / n) + 0.5);
+  }
+
+  private log(text: string, kind: string, tile?: number): void {
+    const d = this.sim.date;
+    this.journal.unshift({ date: `${d.day} ${MONTHS[d.month]} an ${d.year}`, text, kind, tile });
+    if (this.journal.length > 80) this.journal.pop();
+    if (this.el('#journal').hidden) this.unread++;
+    this.renderJournal();
+  }
+
+  private toggleJournal(force?: boolean): void {
+    const j = this.el('#journal');
+    j.hidden = !(force ?? j.hidden);
+    if (!j.hidden) this.unread = 0;
+    this.renderJournal();
+  }
+
+  private renderJournal(): void {
+    const badge = this.el('#journal-badge');
+    badge.hidden = this.unread === 0;
+    badge.textContent = this.unread > 9 ? '9+' : String(this.unread);
+    if (this.el('#journal').hidden) return;
+    this.el('#journal-list').innerHTML = this.journal.length
+      ? this.journal.map((e) => `<li class="k-${e.kind}" ${e.tile !== undefined ? `data-tile="${e.tile}" title="Voir sur la carte"` : ''}><span>${e.date}</span>${e.text}</li>`).join('')
+      : '<li class="empty">Aucun événement pour le moment.</li>';
+  }
+
+  toast(text: string, kind: string, tile?: number): void {
     const box = this.el('#toasts');
     const t = document.createElement('div');
-    t.className = `toast ${kind}`;
-    t.textContent = text;
+    t.className = `toast k-${kind}${tile !== undefined ? ' clickable' : ''}`;
+    if (tile !== undefined) t.dataset.tile = String(tile);
+    t.textContent = text + (tile !== undefined ? ' — voir' : '');
     box.appendChild(t);
     while (box.children.length > 4) box.firstElementChild?.remove();
     setTimeout(() => t.classList.add('out'), 3600);
